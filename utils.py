@@ -2,6 +2,9 @@ import os
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import TimeSeriesSplit
+from vacances_scolaires_france import SchoolHolidayDates
+from datetime import date
+from jours_feries_france import JoursFeries
 
 problem_title = "Bike count prediction"
 _target_column_name = "log_bike_count"
