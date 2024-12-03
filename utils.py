@@ -5,19 +5,23 @@ from sklearn.model_selection import TimeSeriesSplit
 from vacances_scolaires_france import SchoolHolidayDates
 from datetime import date
 from jours_feries_france import JoursFeries
+from pathlib import Path
+
+from sklearn.preprocessing import FunctionTransformer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.linear_model import Ridge
+
 
 problem_title = "Bike count prediction"
 _target_column_name = "log_bike_count"
-# A type (class) which will be used to create wrapper objects for y_pred
+columnns_to_drop = ['counter_id', 'site_id', 'site_name', 'counter_technical_id',
+                    'coordinates',
+                    'Station Number', 'Measurement Period Duration',
+                    'date', 'Date and Time', 'counter_installation_date']
 
-
-def get_cv(X, y, random_state=0):
-    cv = TimeSeriesSplit(n_splits=8)
-    rng = np.random.RandomState(random_state)
-
-    for train_idx, test_idx in cv.split(X):
-        # Take a random sampling on test_idx so it's that samples are not consecutives.
-        yield train_idx, rng.choice(test_idx, size=len(test_idx) // 3, replace=False)
 
 
 def get_train_data(path="data/train.parquet"):
@@ -27,22 +31,6 @@ def get_train_data(path="data/train.parquet"):
     y_array = data[_target_column_name].values
     X_df = data.drop([_target_column_name, "bike_count"], axis=1)
     return X_df, y_array
-
-
-def _merge_external_data(X):
-    file_path = "data/external_data.csv"
-    df_ext = pd.read_csv(file_path, parse_dates=["date"])
-
-    X = X.copy()
-    # When using merge_asof left frame need to be sorted
-    X["orig_index"] = np.arange(X.shape[0])
-    X = pd.merge_asof(
-        X.sort_values("date"), df_ext[["date", "t"]].sort_values("date"), on="date", direction="nearest"
-    )
-    # Sort back to the original order
-    X = X.sort_values("orig_index")
-    del X["orig_index"]
-    return X
 
 def _column_rename(X):
     column_name_mapping = {
@@ -110,61 +98,167 @@ def _column_rename(X):
     return external_conditions
 
 
+def _merge_external_data(X):
+    file_path = Path(__file__).parent / "external_data.csv"
+    df_ext = pd.read_csv(file_path, parse_dates=["date"])
+
+    X = X.copy()
+    # When using merge_asof left frame need to be sorted
+    X["orig_index"] = np.arange(X.shape[0])
+    X = pd.merge_asof(
+        X.sort_values("date"), df_ext[["date", "t"]].sort_values("date"), on="date"
+    )
+    # Sort back to the original order
+    X = X.sort_values("orig_index")
+    del X["orig_index"]
+    return X
+
+
+
+
 def _process_datetime_features(df):
     # Ensure "Date and Time" is in datetime format
     df["Date and Time"] = pd.to_datetime(df["Date and Time"], errors="coerce")
 
-    # Check for missing or invalid datetime entries
+    # Handle missing or invalid datetime entries
     if df["Date and Time"].isnull().any():
         print("Warning: Missing or invalid datetime entries found.")
-        # Handle missing values if needed
         df = df.dropna(subset=["Date and Time"])
 
     # Extract date and time features
-    df["measurement_date"] = df["Date and Time"].dt.date
-    df["measurement_year"] = df["Date and Time"].dt.year
-    df["measurement_month"] = df["Date and Time"].dt.month
-    df["measurement_day_of_week"] = df["Date and Time"].dt.dayofweek
-    df["measurement_day"] = df["Date and Time"].dt.day
-    df["measurement_hour"] = df["Date and Time"].dt.hour
+    df["year"] = df["Date and Time"].dt.year
+    df["month"] = df["Date and Time"].dt.month
+    df["weekday"] = df["Date and Time"].dt.dayofweek
+    df["day"] = df["Date and Time"].dt.day
+    df["hour"] = df["Date and Time"].dt.hour
+    df["is_weekend"] = np.where(df["measurement_day_of_week"] >= 5, 1, 0)
 
-    # Determine if the day is a weekend
-    df["measurement_is_weekend"] = np.where(
-        df["measurement_day_of_week"] >= 5, 1, 0
-    )
-
-    # Handle school holidays
+    # Handle school and public holidays
     unique_dates = df["measurement_date"].unique()
-
-    # Example holiday mapping function
     d = SchoolHolidayDates()
+    f = JoursFeries()
+
     try:
         dict_school_holidays = {date: d.is_holiday_for_zone(date, "C") for date in unique_dates}
-        df["is_school_holiday"] = df["measurement_date"].map(
-            dict_school_holidays
-        )
+        df["is_school_holiday"] = df["measurement_date"].map(dict_school_holidays)
     except Exception as e:
         print(f"Error with school holidays mapping: {e}")
-        df["is_school_holiday"] = 0  # Fallback to default value
+        df["is_school_holiday"] = 0
 
-    # Handle public holidays
-    f = JoursFeries()
     try:
-        dict_public_holidays = {
-            date: f.is_bank_holiday(date, zone="Métropole") for date in unique_dates
-        }
-        df["is_public_holiday"] = df["measurement_date"].map(
-            dict_public_holidays
-        )
+        dict_public_holidays = {date: f.is_bank_holiday(date, zone="Métropole") for date in unique_dates}
+        df["is_public_holiday"] = df["measurement_date"].map(dict_public_holidays)
     except Exception as e:
         print(f"Error with public holidays mapping: {e}")
-        df["is_public_holiday"] = 0  # Fallback to default value
-
-    # Extract additional date and time features for the counter
-    df["counter_year"] = df["Date and Time"].dt.year
-    df["counter_month"] = df["Date and Time"].dt.month
-    df["counter_day"] = df["Date and Time"].dt.day
-    df["counter_hour"] = df["Date and Time"].dt.hour
-
+        df["is_public_holiday"] = 0
     return df
 
+
+
+def _get_estimator():
+    date_encoder = FunctionTransformer(_process_datetime_features)
+    external_data_encoder = FunctionTransformer(_merge_external_data, validate=False)
+    date_cols = ["year", "month", "weekday", "day", "hour", "is_weekend", "is_school_holiday", "is_public_holiday"]
+
+    categorical_encoder = OneHotEncoder(handle_unknown="ignore")
+    categorical_cols = ["counter_name", "site_name"]
+
+    preprocessor = ColumnTransformer(
+        [
+            ("date", OneHotEncoder(handle_unknown="ignore"), date_cols),
+            ("cat", categorical_encoder, categorical_cols),
+        ]
+    )
+    regressor = Ridge()
+
+    pipe = make_pipeline(
+        external_data_encoder,
+        date_encoder,
+        preprocessor,
+        regressor,
+    )
+
+    return pipe
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def get_cv(X, y, random_state=0):
+    cv = TimeSeriesSplit(n_splits=8)
+    rng = np.random.RandomState(random_state)
+
+    for train_idx, test_idx in cv.split(X):
+        # Take a random sampling on test_idx so it's that samples are not consecutives.
+        yield train_idx, rng.choice(test_idx, size=len(test_idx) // 3, replace=False)
+
+
+def find_closest(value, non_nan_values):
+    """Find the closest value to the given value from a set of non-NaN values."""
+    if pd.isna(value):
+        # Ensure non_nan_values is not empty to avoid ValueError
+        if non_nan_values.empty:
+            return value  # Keep NaN if no values to compare
+        closest_value = non_nan_values.iloc[(non_nan_values - value).abs().argmin()]
+        return closest_value
+    return value
+
+
+# Function to fill NaN values with the closest value for all numeric columns
+def fill_closest_value_all_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Fill NaN values with the closest value for all numeric columns in the DataFrame."""
+    filled_df = df.copy()
+    
+    for column in filled_df.columns:
+        if filled_df[column].dtype.kind in 'biufc':  # Check if column is numeric
+            non_nan_values = filled_df[column].dropna()
+            
+            # Apply `find_closest` with `non_nan_values`
+            filled_df[column] = filled_df[column].apply(lambda x: find_closest(x, non_nan_values))
+    
+    return filled_df
+
+
+
+def _fill_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Fill missing rows and values in the DataFrame."""
+    # Ensure 'date' is in datetime format
+    df['date'] = pd.to_datetime(df['date'])
+    
+    # Step 4: Create a complete date range from the minimum to the maximum date in the DataFrame
+    date_range = pd.date_range(start=df['date'].min(), end=df['date'].max(), freq='H')
+
+    # Step 5: Create a DataFrame from the date_range
+    date_range_df = pd.DataFrame(date_range, columns=['date'])
+
+    # Step 6: Merge the date_range DataFrame with the original DataFrame on the 'date' column
+    full_external_conditions = pd.merge(date_range_df, df, on='date', how='left')
+
+    # Remove columns that are completely empty
+    full_external_conditions = full_external_conditions.dropna(axis=1, how='all')
+
+    # Fill missing values using the custom function
+    filled_external_conditions = fill_closest_value_all_columns(full_external_conditions)
+
+    return filled_external_conditions
+
+
+
+def _merge_data_with_external_data(external_conditions, data, test_data):
+    external_conditions['Date and Time'] = pd.to_datetime(external_conditions['Date and Time'])
+    # Merge the dataframes
+    merged_data = pd.merge(data, external_conditions, left_on='date', right_on='Date and Time', how='left')
+    test_merged_data = pd.merge(test_data, external_conditions, left_on='date', right_on='Date and Time', how='left')
+    return merged_data, test_data
