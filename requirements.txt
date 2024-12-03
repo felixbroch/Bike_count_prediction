@@ -6,3 +6,5 @@ scikit-learn
 folium
 ipython
 jupyterlab
+jours_feries_france
+vacances_scolaires_france
