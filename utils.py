@@ -25,7 +25,6 @@ def get_train_data(path="data/train.parquet"):
     data = pd.read_parquet(path)
     # Sort by date first, so that time based cross-validation would produce correct results
     data = data.sort_values(["date", "counter_name"])
-    # data = data.drop(columns=columnns_to_drop)
     y_array = data[_target_column_name].values
     X_df = data.drop([_target_column_name, "bike_count"], axis=1)
     return X_df, y_array
@@ -65,6 +64,9 @@ def _merge_external_data(X):
     # Remove columns with more than 70% of NaN values
     threshold = 0.4
     X = X.loc[:, X.isna().mean() < threshold]
+
+    X = X.drop(columns=columns_to_drop)
+
 
     # Forward fill (ffill) or backward fill (bfill) the remaining columns
     X = X.ffill().bfill()
@@ -120,10 +122,11 @@ def _get_function_transformers():
         ("date_features", FunctionTransformer(_process_datetime_features, validate=False)),
     ])
 
+
 def _get_column_transformers():
     """Create the column transformer for preprocessing."""
     date_cols = ["year", "month", "weekday", "day", "hour", "is_weekend", "is_school_holiday", "is_public_holiday"]
-    categorical_cols = ["counter_name", "site_name"]
+    categorical_cols = ["counter_name"]
 
     return ColumnTransformer(
         [
