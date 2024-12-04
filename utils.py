@@ -7,20 +7,17 @@ from datetime import date
 from jours_feries_france import JoursFeries
 from pathlib import Path
 
-from sklearn.preprocessing import FunctionTransformer
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
+from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import Ridge
 
-
 problem_title = "Bike count prediction"
 _target_column_name = "log_bike_count"
-columnns_to_drop = ['counter_id', 'site_id', 'site_name', 'counter_technical_id',
-                    'coordinates',
-                    'Station Number', 'Measurement Period Duration',
-                    'date', 'Date and Time', 'counter_installation_date']
+columns_to_drop = [ 'counter_id', 'site_id', 'site_name',
+                   'coordinates', 'counter_technical_id', 'Station Number',
+                   
+]
 
 
 
@@ -28,6 +25,7 @@ def get_train_data(path="data/train.parquet"):
     data = pd.read_parquet(path)
     # Sort by date first, so that time based cross-validation would produce correct results
     data = data.sort_values(["date", "counter_name"])
+    # data = data.drop(columns=columnns_to_drop)
     y_array = data[_target_column_name].values
     X_df = data.drop([_target_column_name, "bike_count"], axis=1)
     return X_df, y_array
@@ -36,24 +34,15 @@ def get_train_data(path="data/train.parquet"):
 def _merge_external_data(X):
     file_path = "data/external_data.csv"
     df_ext = pd.read_csv(file_path, parse_dates=["date"])
+    df_ext = _column_rename(df_ext)
 
     # Ensure both X['date'] and df_ext['date'] are in datetime64[ns] format
     X["date"] = pd.to_datetime(X["date"], errors="coerce").astype('datetime64[ns]')
     df_ext["date"] = pd.to_datetime(df_ext["date"], errors="coerce").astype('datetime64[ns]')
 
-    # Drop rows with invalid datetime entries
-    print(f"Invalid dates in X: {X['date'].isnull().sum()}")
-    print(f"Invalid dates in df_ext: {df_ext['date'].isnull().sum()}")
+    # Drop rows with invalid dates
     X = X.dropna(subset=["date"])
     df_ext = df_ext.dropna(subset=["date"])
-
-    # Debugging to verify dtype
-    print(f"X['date'] dtype: {X['date'].dtype}")
-    print(f"df_ext['date'] dtype: {df_ext['date'].dtype}")
-
-    # Verify matching dtypes
-    assert X["date"].dtype == "datetime64[ns]", "X['date'] must be datetime64[ns]"
-    assert df_ext["date"].dtype == "datetime64[ns]", "df_ext['date'] must be datetime64[ns]"
 
     # Sort DataFrames for merge_asof
     X = X.sort_values("date").reset_index(drop=True)
@@ -62,17 +51,26 @@ def _merge_external_data(X):
     # Add original index to preserve order
     X["orig_index"] = np.arange(X.shape[0])
 
-    # Perform merge_asof
+    # Perform merge_asof with handling for NaNs
     X = pd.merge_asof(
         X,
-        df_ext[["date", "t"]],
+        df_ext,
         on="date",
         direction="nearest"
     )
 
     # Restore original order and drop temp column
     X = X.sort_values("orig_index").drop(columns=["orig_index"])
+
+    # Remove columns with more than 70% of NaN values
+    threshold = 0.4
+    X = X.loc[:, X.isna().mean() < threshold]
+
+    # Forward fill (ffill) or backward fill (bfill) the remaining columns
+    X = X.ffill().bfill()
+
     return X
+
 
 
 
@@ -114,109 +112,125 @@ def _process_datetime_features(df):
 
 
 
-def _get_estimator():
-    date_encoder = FunctionTransformer(_process_datetime_features, validate=False)
-    external_data_encoder = FunctionTransformer(_merge_external_data, validate=False)
-    date_cols = ["year", "month", "weekday", "day", "hour", "is_weekend", "is_school_holiday", "is_public_holiday"]
 
-    categorical_encoder = OneHotEncoder(handle_unknown="ignore")
+def _get_function_transformers():
+    """Create the pipeline for function transformers."""
+    return Pipeline([
+        ("external_data", FunctionTransformer(_merge_external_data, validate=False)),
+        ("date_features", FunctionTransformer(_process_datetime_features, validate=False)),
+    ])
+
+def _get_column_transformers():
+    """Create the column transformer for preprocessing."""
+    date_cols = ["year", "month", "weekday", "day", "hour", "is_weekend", "is_school_holiday", "is_public_holiday"]
     categorical_cols = ["counter_name", "site_name"]
 
-    preprocessor = ColumnTransformer(
+    return ColumnTransformer(
         [
             ("date", OneHotEncoder(handle_unknown="ignore"), date_cols),
-            ("cat", categorical_encoder, categorical_cols),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
         ]
     )
-    regressor = Ridge()
 
-    pipe = make_pipeline(
-        external_data_encoder,
-        date_encoder,
-        preprocessor,
-        regressor,
-    )
+def _get_model():
+    """Create the regression model."""
+    return Ridge()
 
-    return pipe
+def _get_estimator():
+    """Combine the function transformers, column transformers, and model into a single pipeline."""
+    function_transformers = _get_function_transformers()
+    column_transformers = _get_column_transformers()
+    model = _get_model()
 
-
-
-
-
-
-
-
-
-
-
+    # Combine all components into a final pipeline
+    full_pipeline = Pipeline([
+        ("function_transformers", function_transformers),
+        ("column_transformers", column_transformers),
+        ("model", model),
+    ])
+    
+    return full_pipeline
 
 
 
 
-# def _column_rename(X):
-#     column_name_mapping = {
-#         'numer_sta': 'Station Number',
-#         'date': 'Date and Time',
-#         'pmer': 'Sea Level Pressure (hPa)',
-#         'tend': 'Pressure Tendency (hPa/3h)',
-#         'cod_tend': 'Pressure Tendency Code',
-#         'dd': 'Wind Direction (°)',
-#         'ff': 'Wind Speed (m/s)',
-#         't': 'Air Temperature (°C)',
-#         'td': 'Dew Point Temperature (°C)',
-#         'u': 'Relative Humidity (%)',
-#         'vv': 'Visibility (m)',
-#         'ww': 'Present Weather Code',
-#         'w1': 'Past Weather Code 1',
-#         'w2': 'Past Weather Code 2',
-#         'n': 'Total Cloud Cover (oktas)',
-#         'nbas': 'Cloud Base Height (m)',
-#         'hbas': 'Lowest Cloud Base Height (m)',
-#         'cl': 'Low Cloud Type',
-#         'cm': 'Medium Cloud Type',
-#         'ch': 'High Cloud Type',
-#         'pres': 'Station Level Pressure (hPa)',
-#         'niv_bar': 'Barometer Altitude (m)',
-#         'geop': 'Geopotential Height (m)',
-#         'tend24': '24h Pressure Tendency (hPa)',
-#         'tn12': '12h Minimum Temperature (°C)',
-#         'tn24': '24h Minimum Temperature (°C)',
-#         'tx12': '12h Maximum Temperature (°C)',
-#         'tx24': '24h Maximum Temperature (°C)',
-#         'tminsol': 'Minimum Soil Temperature (°C)',
-#         'sw': 'Sunshine Duration (hours)',
-#         'tw': 'Wet Bulb Temperature (°C)',
-#         'raf10': '10min Max Wind Gust (m/s)',
-#         'rafper': 'Max Wind Gust (m/s)',
-#         'per': 'Measurement Period Duration',
-#         'etat_sol': 'Ground State',
-#         'ht_neige': 'Snow Height (cm)',
-#         'ssfrai': 'New Snow Depth (cm)',
-#         'perssfrai': 'New Snowfall Duration (hours)',
-#         'rr1': 'Rainfall (1h, mm)',
-#         'rr3': 'Rainfall (3h, mm)',
-#         'rr6': 'Rainfall (6h, mm)',
-#         'rr12': 'Rainfall (12h, mm)',
-#         'rr24': 'Rainfall (24h, mm)',
-#         'phenspe1': 'Special Weather Phenomenon 1',
-#         'phenspe2': 'Special Weather Phenomenon 2',
-#         'phenspe3': 'Special Weather Phenomenon 3',
-#         'phenspe4': 'Special Weather Phenomenon 4',
-#         'nnuage1': 'Layer 1 Cloud Cover (oktas)',
-#         'ctype1': 'Layer 1 Cloud Type',
-#         'hnuage1': 'Layer 1 Cloud Base Height (m)',
-#         'nnuage2': 'Layer 2 Cloud Cover (oktas)',
-#         'ctype2': 'Layer 2 Cloud Type',
-#         'hnuage2': 'Layer 2 Cloud Base Height (m)',
-#         'nnuage3': 'Layer 3 Cloud Cover (oktas)',
-#         'ctype3': 'Layer 3 Cloud Type',
-#         'hnuage3': 'Layer 3 Cloud Base Height (m)',
-#         'nnuage4': 'Layer 4 Cloud Cover (oktas)',
-#         'ctype4': 'Layer 4 Cloud Type',
-#         'hnuage4': 'Layer 4 Cloud Base Height (m)',
-#     }
-#     external_conditions = X.rename(columns=column_name_mapping)
-#     return external_conditions
+
+
+
+
+
+
+
+
+
+
+
+
+def _column_rename(X):
+    column_name_mapping = {
+        'numer_sta': 'Station Number',
+        'pmer': 'Sea Level Pressure (hPa)',
+        'tend': 'Pressure Tendency (hPa/3h)',
+        'cod_tend': 'Pressure Tendency Code',
+        'dd': 'Wind Direction (°)',
+        'ff': 'Wind Speed (m/s)',
+        't': 'Air Temperature (°C)',
+        'td': 'Dew Point Temperature (°C)',
+        'u': 'Relative Humidity (%)',
+        'vv': 'Visibility (m)',
+        'ww': 'Present Weather Code',
+        'w1': 'Past Weather Code 1',
+        'w2': 'Past Weather Code 2',
+        'n': 'Total Cloud Cover (oktas)',
+        'nbas': 'Cloud Base Height (m)',
+        'hbas': 'Lowest Cloud Base Height (m)',
+        'cl': 'Low Cloud Type',
+        'cm': 'Medium Cloud Type',
+        'ch': 'High Cloud Type',
+        'pres': 'Station Level Pressure (hPa)',
+        'niv_bar': 'Barometer Altitude (m)',
+        'geop': 'Geopotential Height (m)',
+        'tend24': '24h Pressure Tendency (hPa)',
+        'tn12': '12h Minimum Temperature (°C)',
+        'tn24': '24h Minimum Temperature (°C)',
+        'tx12': '12h Maximum Temperature (°C)',
+        'tx24': '24h Maximum Temperature (°C)',
+        'tminsol': 'Minimum Soil Temperature (°C)',
+        'sw': 'Sunshine Duration (hours)',
+        'tw': 'Wet Bulb Temperature (°C)',
+        'raf10': '10min Max Wind Gust (m/s)',
+        'rafper': 'Max Wind Gust (m/s)',
+        'per': 'Measurement Period Duration',
+        'etat_sol': 'Ground State',
+        'ht_neige': 'Snow Height (cm)',
+        'ssfrai': 'New Snow Depth (cm)',
+        'perssfrai': 'New Snowfall Duration (hours)',
+        'rr1': 'Rainfall (1h, mm)',
+        'rr3': 'Rainfall (3h, mm)',
+        'rr6': 'Rainfall (6h, mm)',
+        'rr12': 'Rainfall (12h, mm)',
+        'rr24': 'Rainfall (24h, mm)',
+        'phenspe1': 'Special Weather Phenomenon 1',
+        'phenspe2': 'Special Weather Phenomenon 2',
+        'phenspe3': 'Special Weather Phenomenon 3',
+        'phenspe4': 'Special Weather Phenomenon 4',
+        'nnuage1': 'Layer 1 Cloud Cover (oktas)',
+        'ctype1': 'Layer 1 Cloud Type',
+        'hnuage1': 'Layer 1 Cloud Base Height (m)',
+        'nnuage2': 'Layer 2 Cloud Cover (oktas)',
+        'ctype2': 'Layer 2 Cloud Type',
+        'hnuage2': 'Layer 2 Cloud Base Height (m)',
+        'nnuage3': 'Layer 3 Cloud Cover (oktas)',
+        'ctype3': 'Layer 3 Cloud Type',
+        'hnuage3': 'Layer 3 Cloud Base Height (m)',
+        'nnuage4': 'Layer 4 Cloud Cover (oktas)',
+        'ctype4': 'Layer 4 Cloud Type',
+        'hnuage4': 'Layer 4 Cloud Base Height (m)',
+    }
+    external_conditions = X.rename(columns=column_name_mapping)
+    return external_conditions
+
+
 
 # def get_cv(X, y, random_state=0):
 #     cv = TimeSeriesSplit(n_splits=8)
