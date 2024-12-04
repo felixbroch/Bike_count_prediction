@@ -32,126 +32,85 @@ def get_train_data(path="data/train.parquet"):
     X_df = data.drop([_target_column_name, "bike_count"], axis=1)
     return X_df, y_array
 
-def _column_rename(X):
-    column_name_mapping = {
-        'numer_sta': 'Station Number',
-        'date': 'Date and Time',
-        'pmer': 'Sea Level Pressure (hPa)',
-        'tend': 'Pressure Tendency (hPa/3h)',
-        'cod_tend': 'Pressure Tendency Code',
-        'dd': 'Wind Direction (°)',
-        'ff': 'Wind Speed (m/s)',
-        't': 'Air Temperature (°C)',
-        'td': 'Dew Point Temperature (°C)',
-        'u': 'Relative Humidity (%)',
-        'vv': 'Visibility (m)',
-        'ww': 'Present Weather Code',
-        'w1': 'Past Weather Code 1',
-        'w2': 'Past Weather Code 2',
-        'n': 'Total Cloud Cover (oktas)',
-        'nbas': 'Cloud Base Height (m)',
-        'hbas': 'Lowest Cloud Base Height (m)',
-        'cl': 'Low Cloud Type',
-        'cm': 'Medium Cloud Type',
-        'ch': 'High Cloud Type',
-        'pres': 'Station Level Pressure (hPa)',
-        'niv_bar': 'Barometer Altitude (m)',
-        'geop': 'Geopotential Height (m)',
-        'tend24': '24h Pressure Tendency (hPa)',
-        'tn12': '12h Minimum Temperature (°C)',
-        'tn24': '24h Minimum Temperature (°C)',
-        'tx12': '12h Maximum Temperature (°C)',
-        'tx24': '24h Maximum Temperature (°C)',
-        'tminsol': 'Minimum Soil Temperature (°C)',
-        'sw': 'Sunshine Duration (hours)',
-        'tw': 'Wet Bulb Temperature (°C)',
-        'raf10': '10min Max Wind Gust (m/s)',
-        'rafper': 'Max Wind Gust (m/s)',
-        'per': 'Measurement Period Duration',
-        'etat_sol': 'Ground State',
-        'ht_neige': 'Snow Height (cm)',
-        'ssfrai': 'New Snow Depth (cm)',
-        'perssfrai': 'New Snowfall Duration (hours)',
-        'rr1': 'Rainfall (1h, mm)',
-        'rr3': 'Rainfall (3h, mm)',
-        'rr6': 'Rainfall (6h, mm)',
-        'rr12': 'Rainfall (12h, mm)',
-        'rr24': 'Rainfall (24h, mm)',
-        'phenspe1': 'Special Weather Phenomenon 1',
-        'phenspe2': 'Special Weather Phenomenon 2',
-        'phenspe3': 'Special Weather Phenomenon 3',
-        'phenspe4': 'Special Weather Phenomenon 4',
-        'nnuage1': 'Layer 1 Cloud Cover (oktas)',
-        'ctype1': 'Layer 1 Cloud Type',
-        'hnuage1': 'Layer 1 Cloud Base Height (m)',
-        'nnuage2': 'Layer 2 Cloud Cover (oktas)',
-        'ctype2': 'Layer 2 Cloud Type',
-        'hnuage2': 'Layer 2 Cloud Base Height (m)',
-        'nnuage3': 'Layer 3 Cloud Cover (oktas)',
-        'ctype3': 'Layer 3 Cloud Type',
-        'hnuage3': 'Layer 3 Cloud Base Height (m)',
-        'nnuage4': 'Layer 4 Cloud Cover (oktas)',
-        'ctype4': 'Layer 4 Cloud Type',
-        'hnuage4': 'Layer 4 Cloud Base Height (m)',
-    }
-    external_conditions = X.rename(columns=column_name_mapping)
-    return external_conditions
-
 
 def _merge_external_data(X):
     file_path = "data/external_data.csv"
     df_ext = pd.read_csv(file_path, parse_dates=["date"])
 
-    X = X.copy()
-    # When using merge_asof left frame need to be sorted
+    # Ensure both X['date'] and df_ext['date'] are in datetime64[ns] format
+    X["date"] = pd.to_datetime(X["date"], errors="coerce").astype('datetime64[ns]')
+    df_ext["date"] = pd.to_datetime(df_ext["date"], errors="coerce").astype('datetime64[ns]')
+
+    # Drop rows with invalid datetime entries
+    print(f"Invalid dates in X: {X['date'].isnull().sum()}")
+    print(f"Invalid dates in df_ext: {df_ext['date'].isnull().sum()}")
+    X = X.dropna(subset=["date"])
+    df_ext = df_ext.dropna(subset=["date"])
+
+    # Debugging to verify dtype
+    print(f"X['date'] dtype: {X['date'].dtype}")
+    print(f"df_ext['date'] dtype: {df_ext['date'].dtype}")
+
+    # Verify matching dtypes
+    assert X["date"].dtype == "datetime64[ns]", "X['date'] must be datetime64[ns]"
+    assert df_ext["date"].dtype == "datetime64[ns]", "df_ext['date'] must be datetime64[ns]"
+
+    # Sort DataFrames for merge_asof
+    X = X.sort_values("date").reset_index(drop=True)
+    df_ext = df_ext.sort_values("date").reset_index(drop=True)
+
+    # Add original index to preserve order
     X["orig_index"] = np.arange(X.shape[0])
+
+    # Perform merge_asof
     X = pd.merge_asof(
-        X.sort_values("date"), df_ext[["date", "t"]].sort_values("date"), on="date"
+        X,
+        df_ext[["date", "t"]],
+        on="date",
+        direction="nearest"
     )
-    # Sort back to the original order
-    X = X.sort_values("orig_index")
-    del X["orig_index"]
+
+    # Restore original order and drop temp column
+    X = X.sort_values("orig_index").drop(columns=["orig_index"])
     return X
 
 
 
-
 def _process_datetime_features(df):
-    # Ensure "Date and Time" is in datetime format
-    df["Date and Time"] = pd.to_datetime(df["Date and Time"], errors="coerce")
+    # Ensure "date" is in datetime format
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
     # Drop rows with invalid datetime entries
-    df = df.dropna(subset=["Date and Time"])
+    df = df.dropna(subset=["date"])
 
     # Extract date and time features
-    df["year"] = df["Date and Time"].dt.year
-    df["month"] = df["Date and Time"].dt.month
-    df["weekday"] = df["Date and Time"].dt.dayofweek
-    df["day"] = df["Date and Time"].dt.day
-    df["hour"] = df["Date and Time"].dt.hour
+    df["year"] = df["date"].dt.year
+    df["month"] = df["date"].dt.month
+    df["weekday"] = df["date"].dt.dayofweek
+    df["day"] = df["date"].dt.day
+    df["hour"] = df["date"].dt.hour
     df["is_weekend"] = (df["weekday"] >= 5).astype(int)
 
     # Handle school and public holidays
-    unique_dates = df["Date and Time"].dt.date.unique()
+    unique_dates = df["date"].dt.date.unique()
     d = SchoolHolidayDates()
     f = JoursFeries()
 
     try:
         dict_school_holidays = {date: d.is_holiday_for_zone(date, "C") for date in unique_dates}
-        df["is_school_holiday"] = df["Date and Time"].dt.date.map(dict_school_holidays).fillna(0).astype(int)
+        df["is_school_holiday"] = df["date"].dt.date.map(dict_school_holidays).fillna(0).astype(int)
     except Exception as e:
         print(f"Error with school holidays mapping: {e}")
         df["is_school_holiday"] = 0
 
     try:
         dict_public_holidays = {date: f.is_bank_holiday(date, zone="Métropole") for date in unique_dates}
-        df["is_public_holiday"] = df["Date and Time"].dt.date.map(dict_public_holidays).fillna(0).astype(int)
+        df["is_public_holiday"] = df["date"].dt.date.map(dict_public_holidays).fillna(0).astype(int)
     except Exception as e:
         print(f"Error with public holidays mapping: {e}")
         df["is_public_holiday"] = 0
 
     return df
-
 
 
 
@@ -194,7 +153,70 @@ def _get_estimator():
 
 
 
-
+# def _column_rename(X):
+#     column_name_mapping = {
+#         'numer_sta': 'Station Number',
+#         'date': 'Date and Time',
+#         'pmer': 'Sea Level Pressure (hPa)',
+#         'tend': 'Pressure Tendency (hPa/3h)',
+#         'cod_tend': 'Pressure Tendency Code',
+#         'dd': 'Wind Direction (°)',
+#         'ff': 'Wind Speed (m/s)',
+#         't': 'Air Temperature (°C)',
+#         'td': 'Dew Point Temperature (°C)',
+#         'u': 'Relative Humidity (%)',
+#         'vv': 'Visibility (m)',
+#         'ww': 'Present Weather Code',
+#         'w1': 'Past Weather Code 1',
+#         'w2': 'Past Weather Code 2',
+#         'n': 'Total Cloud Cover (oktas)',
+#         'nbas': 'Cloud Base Height (m)',
+#         'hbas': 'Lowest Cloud Base Height (m)',
+#         'cl': 'Low Cloud Type',
+#         'cm': 'Medium Cloud Type',
+#         'ch': 'High Cloud Type',
+#         'pres': 'Station Level Pressure (hPa)',
+#         'niv_bar': 'Barometer Altitude (m)',
+#         'geop': 'Geopotential Height (m)',
+#         'tend24': '24h Pressure Tendency (hPa)',
+#         'tn12': '12h Minimum Temperature (°C)',
+#         'tn24': '24h Minimum Temperature (°C)',
+#         'tx12': '12h Maximum Temperature (°C)',
+#         'tx24': '24h Maximum Temperature (°C)',
+#         'tminsol': 'Minimum Soil Temperature (°C)',
+#         'sw': 'Sunshine Duration (hours)',
+#         'tw': 'Wet Bulb Temperature (°C)',
+#         'raf10': '10min Max Wind Gust (m/s)',
+#         'rafper': 'Max Wind Gust (m/s)',
+#         'per': 'Measurement Period Duration',
+#         'etat_sol': 'Ground State',
+#         'ht_neige': 'Snow Height (cm)',
+#         'ssfrai': 'New Snow Depth (cm)',
+#         'perssfrai': 'New Snowfall Duration (hours)',
+#         'rr1': 'Rainfall (1h, mm)',
+#         'rr3': 'Rainfall (3h, mm)',
+#         'rr6': 'Rainfall (6h, mm)',
+#         'rr12': 'Rainfall (12h, mm)',
+#         'rr24': 'Rainfall (24h, mm)',
+#         'phenspe1': 'Special Weather Phenomenon 1',
+#         'phenspe2': 'Special Weather Phenomenon 2',
+#         'phenspe3': 'Special Weather Phenomenon 3',
+#         'phenspe4': 'Special Weather Phenomenon 4',
+#         'nnuage1': 'Layer 1 Cloud Cover (oktas)',
+#         'ctype1': 'Layer 1 Cloud Type',
+#         'hnuage1': 'Layer 1 Cloud Base Height (m)',
+#         'nnuage2': 'Layer 2 Cloud Cover (oktas)',
+#         'ctype2': 'Layer 2 Cloud Type',
+#         'hnuage2': 'Layer 2 Cloud Base Height (m)',
+#         'nnuage3': 'Layer 3 Cloud Cover (oktas)',
+#         'ctype3': 'Layer 3 Cloud Type',
+#         'hnuage3': 'Layer 3 Cloud Base Height (m)',
+#         'nnuage4': 'Layer 4 Cloud Cover (oktas)',
+#         'ctype4': 'Layer 4 Cloud Type',
+#         'hnuage4': 'Layer 4 Cloud Base Height (m)',
+#     }
+#     external_conditions = X.rename(columns=column_name_mapping)
+#     return external_conditions
 
 # def get_cv(X, y, random_state=0):
 #     cv = TimeSeriesSplit(n_splits=8)
