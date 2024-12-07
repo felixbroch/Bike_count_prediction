@@ -11,6 +11,7 @@ from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardSc
 from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import Ridge
+from xgboost import XGBRegressor
 
 problem_title = "Bike count prediction"
 _target_column_name = "log_bike_count"
@@ -29,8 +30,14 @@ def get_train_data(path="data/train.parquet"):
     X_df = data.drop([_target_column_name, "bike_count"], axis=1)
     return X_df, y_array
 
+def get_test_data(path="data/final_test.parquet"):
+    data = pd.read_parquet(path)
+    # Sort by date first, so that time based cross-validation would produce correct results
+    data = data.sort_values(["date", "counter_name"])
+    return data
 
-def _merge_external_data(X):
+
+def _merge_external_data(X, is_train=True, columns_to_drop_store=None):
     file_path = "data/external_data.csv"
     df_ext = pd.read_csv(file_path, parse_dates=["date"])
     df_ext = _column_rename(df_ext)
@@ -65,13 +72,25 @@ def _merge_external_data(X):
     threshold = 0.4
     X = X.loc[:, X.isna().mean() < threshold]
 
-    X = X.drop(columns=columns_to_drop)
-
+    if is_train:
+        # Initialize columns_to_drop_store if it's None
+        if columns_to_drop_store is None:
+            columns_to_drop_store = []
+        
+        # Drop columns and store dropped columns
+        dropped_cols = [col for col in columns_to_drop if col in X.columns]
+        X = X.drop(columns=dropped_cols, errors="ignore")
+        columns_to_drop_store.extend(dropped_cols)  # Store dropped columns
+    else:
+        # Align columns with training data by dropping the stored columns
+        if columns_to_drop_store:
+            X = X.drop(columns=columns_to_drop_store, errors="ignore")
 
     # Forward fill (ffill) or backward fill (bfill) the remaining columns
     X = X.ffill().bfill()
 
     return X
+
 
 
 
@@ -114,11 +133,15 @@ def _process_datetime_features(df):
 
 
 
+dropped_columns_store = []  # Shared list for storing dropped columns
 
-def _get_function_transformers():
+def _get_function_transformers(is_train=True):
     """Create the pipeline for function transformers."""
     return Pipeline([
-        ("external_data", FunctionTransformer(_merge_external_data, validate=False)),
+        ("external_data", FunctionTransformer(
+            lambda X: _merge_external_data(X, is_train=is_train, columns_to_drop_store=dropped_columns_store), 
+            validate=False
+        )),
         ("date_features", FunctionTransformer(_process_datetime_features, validate=False)),
     ])
 
@@ -127,17 +150,38 @@ def _get_column_transformers():
     """Create the column transformer for preprocessing."""
     date_cols = ["year", "month", "weekday", "day", "hour", "is_weekend", "is_school_holiday", "is_public_holiday"]
     categorical_cols = ["counter_name"]
+    numerical_cols = ['latitude', 'longitude', 'Sea Level Pressure (hPa)', 'Pressure Tendency (hPa/3h)',
+                      'Pressure Tendency Code', 'Wind Direction (°)', 'Wind Speed (m/s)', 'Air Temperature (°C)',
+                      'Dew Point Temperature (°C)', 'Relative Humidity (%)', 'Visibility (m)', 'Present Weather Code',
+                      'Past Weather Code 1', 'Past Weather Code 2', 'Total Cloud Cover (oktas)', 'Cloud Base Height (m)',
+                      'Lowest Cloud Base Height (m)', 'Low Cloud Type', 'Station Level Pressure (hPa)', '24h Pressure Tendency (hPa)',
+                      '10min Max Wind Gust (m/s)', 'Max Wind Gust (m/s)', 'Measurement Period Duration', 'Ground State',
+                      'Snow Height (cm)', 'New Snow Depth (cm)', 'New Snowfall Duration (hours)', 'Rainfall (1h, mm)',
+                      'Rainfall (3h, mm)', 'Rainfall (6h, mm)', 'Rainfall (12h, mm)', 'Rainfall (24h, mm)',
+                      'Layer 1 Cloud Cover (oktas)', 'Layer 1 Cloud Type', 'Layer 1 Cloud Base Height (m)'                      
+                    ]
 
+    # Use an instance of StandardScaler
     return ColumnTransformer(
         [
             ("date", OneHotEncoder(handle_unknown="ignore"), date_cols),
             ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
+            ("num", StandardScaler(), numerical_cols)
         ]
     )
 
+
 def _get_model():
-    """Create the regression model."""
-    return Ridge()
+    """Create the XGBoost model with hyperparameters."""
+    return XGBRegressor(
+        objective='reg:squarederror',
+        n_estimators=300,
+        learning_rate=0.01,
+        max_depth=50,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42
+    )
 
 def _get_estimator():
     """Combine the function transformers, column transformers, and model into a single pipeline."""
