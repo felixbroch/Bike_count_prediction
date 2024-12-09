@@ -13,3 +13,5 @@ skrub
 optuna
 flaml
 joblib
+lightgbm
+h2o
