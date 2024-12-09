@@ -16,12 +16,11 @@ from xgboost import XGBRegressor
 problem_title = "Bike count prediction"
 _target_column_name = "log_bike_count"
 columns_to_drop = [
-    "counter_id",
-    "site_id",
-    "site_name",
-    "coordinates",
-    "counter_technical_id",
-    "Station Number",
+                'bike_count', 'log_bike_count',
+                'counter_id', 'site_id', 'site_name', 'counter_technical_id',
+                'coordinates',
+                'Station Number', 'Measurement Period Duration',
+                'date', 'counter_installation_date',
 ]
 
 
