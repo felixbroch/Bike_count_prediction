@@ -229,13 +229,12 @@ def _get_column_transformers():
 def _get_model():
     """Create the XGBoost model with hyperparameters."""
     return XGBRegressor(
-        objective="reg:squarederror",
-        n_estimators=300,
-        learning_rate=0.01,
-        max_depth=50,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42,
+        objective='reg:squarederror',
+        colsample_bytree=0.8189577147756041,
+        learning_rate=0.11986932069472364,
+        max_depth=8,
+        n_estimators=374,
+        subsample=0.6854480891474511
     )
 
 
