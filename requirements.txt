@@ -12,3 +12,4 @@ xgboost
 skrub
 optuna
 flaml
+joblib
