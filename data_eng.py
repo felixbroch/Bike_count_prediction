@@ -8,11 +8,10 @@ from sklearn.ensemble import RandomForestClassifier
 import logging
 
 import constants
-from src.configs.names import TARGET
 
 
 def selecting_features_with_boruta(
-    df: pd.DataFrame, features: List[str] | None, target: str | None = TARGET
+    df: pd.DataFrame, features: List[str] | None, target: str | None
 ) -> List[str]:
     """
     Select features using Boruta.
@@ -43,7 +42,7 @@ def selecting_features_with_boruta(
 
 
 def selecting_features_with_random_columns(
-    df: pd.DataFrame, features: List[str] | None, target: str | None = TARGET
+    df: pd.DataFrame, features: List[str] | None, target: str | None
 ) -> List[str]:
     """
     Select features that have less importance than random ones.
@@ -91,7 +90,7 @@ def selecting_features_with_random_columns(
 
 
 def selecting_features_with_correlations(
-    df: pd.DataFrame, features: List[str] | None, target: str | None = TARGET
+    df: pd.DataFrame, features: List[str] | None, target: str | None
 ) -> list:
     """
     Select feature based on correlations.
