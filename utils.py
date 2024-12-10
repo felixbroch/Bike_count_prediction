@@ -13,8 +13,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import Ridge
 from xgboost import XGBRegressor
 
-problem_title = "Bike count prediction"
-_target_column_name = "log_bike_count"
+
 columns_to_drop = [
                 'date', 'counter_installation_date', 'Cloud_Base_Height_(m)',
                 'counter_id', 'site_id', 'site_name', 'counter_technical_id',
@@ -32,87 +31,74 @@ columns_to_drop = [
 
 ]
 
-
-def get_train_data(path="data/train.parquet"):
-    data = pd.read_parquet(path)
-    # Sort by date first, so that time based cross-validation would produce correct results
-    data = data.sort_values(["date", "counter_name"])
-    y_array = data[_target_column_name].values
-    X_df = data.drop([_target_column_name, "bike_count"], axis=1)
-    return X_df, y_array
-
-
-def get_test_data(path="data/final_test.parquet"):
-    data = pd.read_parquet(path)
-    # Sort by date first, so that time based cross-validation would produce correct results
-    data = data.sort_values(["date", "counter_name"])
-    return data
-
-
-def _merge_external_data(X, is_train=True, columns_to_drop_store=None):
-    file_path = "data/external_data.csv"
-    df_ext = pd.read_csv(file_path, parse_dates=["date"])
-    df_ext = _column_rename(df_ext)
-
-    # Ensure both X['date'] and df_ext['date'] are in datetime64[ns] format
-    X["date"] = pd.to_datetime(X["date"], errors="coerce").astype("datetime64[ns]")
-    df_ext["date"] = pd.to_datetime(df_ext["date"], errors="coerce").astype(
-        "datetime64[ns]"
-    )
-
-    # Drop rows with invalid dates
-    X = X.dropna(subset=["date"])
-    df_ext = df_ext.dropna(subset=["date"])
-
-    # Sort DataFrames for merge_asof
-    X = X.sort_values("date").reset_index(drop=True)
-    df_ext = df_ext.sort_values("date").reset_index(drop=True)
-
-    # Add original index to preserve order
-    X["orig_index"] = X.index
-
-    # Perform merge_asof with handling for NaNs
-    X = pd.merge_asof(X, df_ext, on="date", direction="nearest")
-
-    # Restore original order and drop temp column
-    X = X.sort_values("orig_index").drop(columns=["orig_index"])
-
-    # Remove columns with more than 70% of NaN values
-    threshold = 0.4
-    X = X.loc[:, X.isna().mean() < threshold]
-
-    if is_train:
-        # Initialize columns_to_drop_store if it's None
-        if columns_to_drop_store is None:
-            columns_to_drop_store = []
-
-        # Drop columns and store dropped columns
-        dropped_cols = [col for col in columns_to_drop if col in X.columns]
-        X = X.drop(columns=dropped_cols, errors="ignore")
-        columns_to_drop_store.extend(dropped_cols)  # Store dropped columns
-    else:
-        # Align columns with training data by dropping the stored columns
-        if columns_to_drop_store:
-            X = X.drop(columns=columns_to_drop_store, errors="ignore")
-
-    # Forward fill (ffill) or backward fill (bfill) the remaining columns
-    X = X.ffill().bfill()
-
-    return X
+# Fonction qui fait ce qu'on voulait faire avec ffill et bfill mais a la place prends la valeur la plus proche
+def fill_closest_value_all_columns(df):
+    """Fill NaN values with the closest value for all numeric columns in the DataFrame."""
+    filled_df = df.copy()
+    
+    for column in filled_df.columns:
+        if filled_df[column].dtype.kind in 'biufc':  # Numeric columns
+            non_nan_values = filled_df[column].dropna()
+            
+            def find_closest(value):
+                if pd.isna(value):
+                    closest_value = non_nan_values.iloc[(non_nan_values - value).abs().argmin()]
+                    return closest_value
+                return value
+            
+            filled_df[column] = filled_df[column].apply(find_closest)
+    
+    return filled_df
 
 
-def _process_datetime_features(df):
+def _merge_external_data(X):
+    external_conditions = pd.read_csv('data/external_data.csv')
+    external_conditions['date'] = pd.to_datetime(external_conditions['date'])
+
+    # Drop columns with more than 40% NaN values
+    threshold = len(external_conditions) * 0.4
+    external_conditions = external_conditions.dropna(thresh=threshold, axis=1)
+
+    # Step 1: Sort the `external_conditions` DataFrame by the `date` column
+    external_conditions = external_conditions.sort_values(by='date')
+
+    # Drop columns with more than 40% NaN values
+    threshold = len(external_conditions) * 0.4
+    external_conditions = external_conditions.dropna(thresh=threshold, axis=1)
+
+    # Step 2: Remove duplicate entries based on the `date` column
+    external_conditions = external_conditions.drop_duplicates(subset='date')
+
+    # Step 3: Convert the 'date' column to datetime
+    external_conditions['date'] = pd.to_datetime(external_conditions['date'])
+
+    # Step 4: Create a complete date range from the minimum to the maximum date in the DataFrame
+    date_range = pd.date_range(start=external_conditions['date'].min(), end=external_conditions['date'].max(), freq='h')
+
+    # Step 5: Create a DataFrame from the date_range
+    date_range_df = pd.DataFrame(date_range, columns=['date'])
+
+    # Step 6: Merge the date_range DataFrame with the external_conditions DataFrame on the 'date' column
+    full_external_conditions = pd.merge(date_range_df, external_conditions, on='date', how='left')
+
+    # Apply the function to the DataFrame
+    filled_external_conditions = fill_closest_value_all_columns(full_external_conditions)
+    merged_conditions = pd.merge(X, filled_external_conditions, on='date', how='left')
+
+    return merged_conditions
+
+
+def _process_datetime_features(X):
     # Ensure "date" is in datetime format
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    X["date"] = pd.to_datetime(X["date"], errors="coerce")
 
     # Drop rows with invalid datetime entries
-    df = df.dropna(subset=["date"])
+    df = X.dropna(subset=["date"])
 
     # Extract date and time features
     df["year"] = df["date"].dt.year
     df["month"] = df["date"].dt.month
     df["weekday"] = df["date"].dt.dayofweek
-    df["week"] = df["date"].dt.isocalendar().week
     df["day"] = df["date"].dt.day
     df["hour"] = df["date"].dt.hour
     df["is_weekend"] = (df["weekday"] >= 5).astype(int)
@@ -123,52 +109,162 @@ def _process_datetime_features(df):
     f = JoursFeries()
 
     try:
-        dict_school_holidays = {
-            date: d.is_holiday_for_zone(date, "C") for date in unique_dates
-        }
-        df["is_school_holiday"] = (
-            df["date"].dt.date.map(dict_school_holidays).fillna(0).astype(int)
-        )
+        dict_school_holidays = {date: d.is_holiday_for_zone(date, "C") for date in unique_dates}
+        df["is_school_holiday"] = df["date"].dt.date.map(dict_school_holidays).fillna(0).astype(int)
     except Exception as e:
         print(f"Error with school holidays mapping: {e}")
         df["is_school_holiday"] = 0
-
-    try:
-        dict_public_holidays = {
-            date: f.is_bank_holiday(date, zone="Métropole") for date in unique_dates
-        }
-        df["is_public_holiday"] = (
-            df["date"].dt.date.map(dict_public_holidays).fillna(0).astype(int)
-        )
-    except Exception as e:
-        print(f"Error with public holidays mapping: {e}")
-        df["is_public_holiday"] = 0
-
+    
     return df
 
 
-dropped_columns_store = []  # Shared list for storing dropped columns
+def _add_construction_work(df, df_test):
+    start_date_Monpar = "2021-01-25"
+    end_date_Monpar = "2021-02-23"
+    start_date_Clichy_NO_SE = "2021-04-09"
+    end_date_Clichy = "2021-07-20"
+    start_date_Clichy_SE_NO = "2021-03-23"
+    start_date_Pompidou = "2021-03-13"
+    end_date_Pompidou = "2021-04-01"
+
+    df["road_work_Monpar_O_E"] = np.where(
+        (df["date"] >= start_date_Monpar)
+        & (df["date"] <= end_date_Monpar)
+        & (df["counter_name"] == "152 boulevard du Montparnasse O-E"),
+        1,
+        0,
+    )
+    df["road_work_Monpar_E_O"] = np.where(
+        (df["date"] >= start_date_Monpar)
+        & (df["date"] <= end_date_Monpar)
+        & (df["counter_name"] == "152 boulevard du Montparnasse E-O"),
+        1,
+        0,
+    )
+    df["road_work_Clichy_NO_SE"] = np.where(
+        (df["date"] >= start_date_Clichy_NO_SE)
+        & (df["date"] <= end_date_Clichy)
+        & (df["counter_name"] == "20 Avenue de Clichy NO-SE"),
+        1,
+        0,
+    )
+    df["road_work_Clichy_SE_NO"] = np.where(
+        (df["date"] >= start_date_Clichy_SE_NO)
+        & (df["date"] <= end_date_Clichy)
+        & (df["counter_name"] == "20 Avenue de Clichy SE-NO"),
+        1,
+        0,
+    )
+    df["road_work_Pompidou_NE_SO"] = np.where(
+        (df["date"] >= start_date_Pompidou)
+        & (df["date"] <= end_date_Pompidou)
+        & (df["counter_name"] == "Voie Georges Pompidou NE-SO"),
+        1,
+        0,
+    )
+    df["road_work_Pompidou_SO_NE"] = np.where(
+        (df["date"] >= start_date_Pompidou)
+        & (df["date"] <= end_date_Pompidou)
+        & (df["counter_name"] == "Voie Georges Pompidou SO-NE"),
+        1,
+        0,
+    )
+
+    df["road_work"] = (
+        df["road_work_Monpar_E_O"]
+        + df["road_work_Monpar_O_E"]
+        + df["road_work_Clichy_NO_SE"]
+        + df["road_work_Clichy_SE_NO"]
+        + df["road_work_Pompidou_NE_SO"]
+        + df["road_work_Pompidou_SO_NE"]
+    )
+    df.drop(
+        [
+            "road_work_Monpar_E_O",
+            "road_work_Monpar_O_E",
+            "road_work_Clichy_NO_SE",
+            "road_work_Clichy_SE_NO",
+            "road_work_Pompidou_NE_SO",
+            "road_work_Pompidou_SO_NE",
+        ],
+        axis=1,
+        inplace=True,
+    )
+
+    df["log_bike_count"][
+        (df["date"] >= start_date_Monpar)
+        & (df["date"] <= end_date_Monpar)
+        & (df["counter_name"] == "152 boulevard du Montparnasse E-O")
+    ] = 0
+    df["log_bike_count"][
+        (df["date"] >= start_date_Monpar)
+        & (df["date"] <= end_date_Monpar)
+        & (df["counter_name"] == "152 boulevard du Montparnasse O-E")
+    ] = 0
+    df["log_bike_count"][
+        (df["date"] >= start_date_Clichy_NO_SE)
+        & (df["date"] <= end_date_Clichy)
+        & (df["counter_name"] == "20 Avenue de Clichy NO-SE")
+    ] = 0
+    df["log_bike_count"][
+        (df["date"] >= start_date_Clichy_SE_NO)
+        & (df["date"] <= end_date_Clichy)
+        & (df["counter_name"] == "20 Avenue de Clichy SE-NO")
+    ] = 0
+    df["log_bike_count"][
+        (df["date"] >= start_date_Pompidou)
+        & (df["date"] <= end_date_Pompidou)
+        & (df["counter_name"] == "Voie Georges Pompidou NE-SO")
+    ] = 0
+    df["log_bike_count"][
+        (df["date"] >= start_date_Pompidou)
+        & (df["date"] <= end_date_Pompidou)
+        & (df["counter_name"] == "Voie Georges Pompidou SO-NE")
+    ] = 0
+
+    df_test['road_work'] = 0
+
+    return df, df_test
 
 
-def _get_function_transformers(is_train=True):
+
+def get_and_process_data():
+    data = pd.read_parquet("data/train.parquet")
+    data = data.sort_values(["date", "counter_name"])
+    data = _merge_external_data(data)
+    data = _column_rename(data)
+
+
+    data_test = pd.read_parquet("data/final_test.parquet")
+    data_test = data_test.sort_values(["date", "counter_name"])
+    data_test = _merge_external_data(data_test)
+    data_test = _column_rename(data_test)
+
+    data, data_test = _add_construction_work(data, data_test)
+
+    data = data.drop(columns=columns_to_drop)
+    data_test = data_test.drop(columns=columns_to_drop)
+
+    X = data.drop(columns=['log_bike_count', 'bike_count'])
+    y = data['log_bike_count']
+
+    return X, y, data_test
+
+
+
+
+
+
+def _get_function_transformers():
     """Create the pipeline for function transformers."""
+    def transform(X):
+        X = _merge_external_data(X)
+        X = _process_datetime_features(X)
+        return X
+
     return Pipeline(
         [
-            (
-                "external_data",
-                FunctionTransformer(
-                    lambda X: _merge_external_data(
-                        X,
-                        is_train=is_train,
-                        columns_to_drop_store=dropped_columns_store,
-                    ),
-                    validate=False,
-                ),
-            ),
-            (
-                "date_features",
-                FunctionTransformer(_process_datetime_features, validate=False),
-            ),
+            ("transform", FunctionTransformer(transform, validate=False)),
         ]
     )
 
@@ -327,74 +423,3 @@ def _column_rename(X):
     }
     external_conditions = X.rename(columns=column_name_mapping)
     return external_conditions
-
-
-# def get_cv(X, y, random_state=0):
-#     cv = TimeSeriesSplit(n_splits=8)
-#     rng = np.random.RandomState(random_state)
-
-#     for train_idx, test_idx in cv.split(X):
-#         # Take a random sampling on test_idx so it's that samples are not consecutives.
-#         yield train_idx, rng.choice(test_idx, size=len(test_idx) // 3, replace=False)
-
-
-# def find_closest(value, non_nan_values):
-#     """Find the closest value to the given value from a set of non-NaN values."""
-#     if pd.isna(value):
-#         # Ensure non_nan_values is not empty to avoid ValueError
-#         if non_nan_values.empty:
-#             return value  # Keep NaN if no values to compare
-#         closest_value = non_nan_values.iloc[(non_nan_values - value).abs().argmin()]
-#         return closest_value
-#     return value
-
-
-# # Function to fill NaN values with the closest value for all numeric columns
-# def fill_closest_value_all_columns(df: pd.DataFrame) -> pd.DataFrame:
-#     """Fill NaN values with the closest value for all numeric columns in the DataFrame."""
-#     filled_df = df.copy()
-
-#     for column in filled_df.columns:
-#         if filled_df[column].dtype.kind in 'biufc':  # Check if column is numeric
-#             non_nan_values = filled_df[column].dropna()
-
-#             # Apply `find_closest` with `non_nan_values`
-#             filled_df[column] = filled_df[column].apply(lambda x: find_closest(x, non_nan_values))
-
-#     return filled_df
-
-
-# def _fill_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-#     """Fill missing rows and values in the DataFrame."""
-#     # Ensure 'date' is in datetime format
-#     df['date'] = pd.to_datetime(df['date'])
-
-#     # Step 4: Create a complete date range from the minimum to the maximum date in the DataFrame
-#     date_range = pd.date_range(start=df['date'].min(), end=df['date'].max(), freq='H')
-
-#     # Step 5: Create a DataFrame from the date_range
-#     date_range_df = pd.DataFrame(date_range, columns=['date'])
-
-#     # Step 6: Merge the date_range DataFrame with the original DataFrame on the 'date' column
-#     full_external_conditions = pd.merge(date_range_df, df, on='date', how='left')
-
-#     # Remove columns that are completely empty
-#     full_external_conditions = full_external_conditions.dropna(axis=1, how='all')
-
-#     # Fill missing values using the custom function
-#     filled_external_conditions = fill_closest_value_all_columns(full_external_conditions)
-
-#     return filled_external_conditions
-
-
-# def _merge_data_with_external_data(external_conditions, data, test_data):
-#     # Ensure datetime compatibility
-#     external_conditions["Date and Time"] = pd.to_datetime(external_conditions["Date and Time"])
-#     data["date"] = pd.to_datetime(data["date"])
-#     test_data["date"] = pd.to_datetime(test_data["date"])
-
-#     # Merge the dataframes
-#     merged_data = pd.merge(data, external_conditions, left_on="date", right_on="Date and Time", how="left")
-#     test_merged_data = pd.merge(test_data, external_conditions, left_on="date", right_on="Date and Time", how="left")
-
-#     return merged_data, test_merged_data
