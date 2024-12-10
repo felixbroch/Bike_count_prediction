@@ -227,20 +227,64 @@ def _add_construction_work(df, df_test):
     return df, df_test
 
 
+def _confinement_and_couvre_feu(X, X_test):
+    confinements = [
+    ("2020-10-30", "2020-12-14", "confinement"),
+    ("2021-04-03", "2021-05-19", "confinement"), 
+    ]
+
+    couvre_feux = [
+        ("2020-10-17", "2020-10-29", "21:00", "06:00", "couvre-feu"),
+        ("2020-12-15", "2021-01-15", "20:00", "06:00", "couvre-feu"),
+        ("2021-01-16", "2021-03-19", "18:00", "06:00", "couvre-feu"),
+        ("2021-03-20", "2021-05-18", "19:00", "06:00", "couvre-feu"),
+        ("2021-05-19", "2021-06-08", "21:00", "06:00", "couvre-feu"),
+        ("2021-06-09", "2021-06-19", "23:00", "06:00", "couvre-feu"),
+    ]
+
+    confinements = [(pd.to_datetime(start), pd.to_datetime(end), label) for start, end, label in confinements]
+    couvre_feux = [(pd.to_datetime(start), pd.to_datetime(end), start_hour, end_hour, label) for start, end, start_hour, end_hour, label in couvre_feux]
+
+    X["confinement"] = 0
+    X["couvre_feu"] = 0
+
+    X_test["confinement"] = 0
+    X_test["couvre_feu"] = 0
+
+    for start, end, label in confinements:
+        X.loc[(X["date"] >= start) & (X["date"] <= end), "confinement"] = 1
+
+    for start, end, start_hour, end_hour, label in couvre_feux:
+
+        in_couvre_feu_period = (X["date"] >= start) & (X["date"] <= end)
+
+        in_couvre_feu_hours = (X["date"].dt.time >= pd.to_datetime(start_hour).time()) | (X["date"].dt.time <= pd.to_datetime(end_hour).time())
+
+        X.loc[in_couvre_feu_period & in_couvre_feu_hours, "couvre_feu"] = 1
+
+    return X, X_test
+
+
+
+
+
+
 
 def get_and_process_data():
     data = pd.read_parquet("data/train.parquet")
     data = data.sort_values(["date", "counter_name"])
     data = _merge_external_data(data)
     data = _column_rename(data)
-
+    data = _process_datetime_features(data)
 
     data_test = pd.read_parquet("data/final_test.parquet")
     data_test = data_test.sort_values(["date", "counter_name"])
     data_test = _merge_external_data(data_test)
     data_test = _column_rename(data_test)
+    data_test = _process_datetime_features(data_test)
 
     data, data_test = _add_construction_work(data, data_test)
+    data, data_test = _confinement_and_couvre_feu(data, data_test)
 
     data = data.drop(columns=columns_to_drop)
     data_test = data_test.drop(columns=columns_to_drop)
