@@ -271,13 +271,11 @@ def _confinement_and_couvre_feu(X, X_test):
 
 def get_and_process_data():
     data = pd.read_parquet("data/train.parquet")
-    data = data.sort_values(["date", "counter_name"])
     data = _merge_external_data(data)
     data = _column_rename(data)
     data = _process_datetime_features(data)
 
     data_test = pd.read_parquet("data/final_test.parquet")
-    data_test = data_test.sort_values(["date", "counter_name"])
     data_test = _merge_external_data(data_test)
     data_test = _column_rename(data_test)
     data_test = _process_datetime_features(data_test)
