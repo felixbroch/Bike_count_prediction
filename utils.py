@@ -10,8 +10,11 @@ from pathlib import Path
 from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
 from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
 from xgboost import XGBRegressor
+
+
 
 
 columns_to_drop = [
@@ -266,19 +269,13 @@ def _confinement_and_couvre_feu(X, X_test):
 
 
 
-
-
-
-
 def get_and_process_data():
     data = pd.read_parquet("data/train.parquet")
-    # data = data.sort_values(["date", "counter_name"]).reset_index(drop = False)
     data = _merge_external_data(data)
     data = _column_rename(data)
     data = _process_datetime_features(data)
 
     data_test = pd.read_parquet("data/final_test.parquet")
-    # data_test = data_test.sort_values(["date", "counter_name"]).reset_index(drop = False)
     data_test = _merge_external_data(data_test)
     data_test = _column_rename(data_test)
     data_test = _process_datetime_features(data_test)
@@ -295,113 +292,57 @@ def get_and_process_data():
     return X, y, data_test
 
 
+def create_pipeline(df, model=None):
 
+    # Classify columns into categorical, numerical, and binary
+    categorical_columns = [col for col in df.columns if df[col].dtype == 'object']
+    numerical_columns = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col]) and len(df[col].unique()) > 2]
+    binary_columns = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col]) and len(df[col].unique()) == 2]
 
+    # Define preprocessing for each type of feature
+    categorical_transformer = OneHotEncoder(handle_unknown='ignore')
+    numerical_transformer = StandardScaler()
 
-
-def _get_function_transformers():
-    """Create the pipeline for function transformers."""
-    def transform(X):
-        X = _merge_external_data(X)
-        X = _process_datetime_features(X)
-        return X
-
-    return Pipeline(
-        [
-            ("transform", FunctionTransformer(transform, validate=False)),
+    # Combine preprocessors in a column transformer
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('cat', categorical_transformer, categorical_columns),
+            ('num', numerical_transformer, numerical_columns),
+            ('passthrough', 'passthrough', binary_columns),
         ]
     )
 
-
-def _get_column_transformers():
-    """Create the column transformer for preprocessing."""
-    date_cols = [
-        "year",
-        "month",
-        "weekday",
-        "day",
-        "hour",
-        "is_weekend",
-        "is_school_holiday",
-        "is_public_holiday",
-    ]
-    categorical_cols = ["counter_name"]
-    numerical_cols = [
-        "latitude",
-        "longitude",
-        "Sea_Level_Pressure_(hPa)",
-        "Pressure_Tendency_(hPa/3h)",
-        "Pressure_Tendency_Code",
-        "Wind_Direction_(°)",
-        "Wind_Speed_(m/s)",
-        "Air_Temperature_(°C)",
-        "Dew_Point_Temperature_(°C)",
-        "Relative_Humidity_(%)",
-        "Visibility_(m)",
-        "Present_Weather_Code",
-        "Past_Weather_Code_1",
-        "Past_Weather_Code_2",
-        "Total_Cloud_Cover_(oktas)",
-        "Cloud_Base_Height_(m)",
-        "Lowest_Cloud_Base_Height_(m)",
-        "Low_Cloud_Type",
-        "Station_Level_Pressure_(hPa)",
-        "24h_Pressure_Tendency_(hPa)",
-        "10min_Max_Wind_Gust_(m/s)",
-        "Max_Wind_Gust_(m/s)",
-        "Measurement_Period_Duration",
-        "Ground_State",
-        "Snow_Height_(cm)",
-        "New_Snow_Depth_(cm)",
-        "New_Snowfall_Duration_(hours)",
-        "Rainfall_(1h,_mm)",
-        "Rainfall_(3h,_mm)",
-        "Rainfall_(6h,_mm)",
-        "Rainfall_(12h,_mm)",
-        "Rainfall_(24h,_mm)",
-        "Layer_1_Cloud_Cover_(oktas)",
-        "Layer_1_Cloud_Type",
-        "Layer_1_Cloud_Base_Height_(m)",
-    ]
-
-    # Use an instance of StandardScaler
-    return ColumnTransformer(
-        [
-            ("date", OneHotEncoder(handle_unknown="ignore"), date_cols),
-            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
-            ("num", StandardScaler(), numerical_cols),
-        ]
+    # Use the provided model or default to RandomForestClassifier
+    if model is None:
+        model = RandomForestRegressor(
+        n_estimators=50,          # Reduce the number of trees
+        max_depth=5,              # Limit the depth of each tree
+        min_samples_split=10,     # Require more samples to split
+        min_samples_leaf=5,       # Require more samples in leaf nodes
+        random_state=42           # Ensure reproducibility
     )
 
 
-def _get_model():
-    """Create the XGBoost model with hyperparameters."""
-    return XGBRegressor(
-        objective='reg:squarederror',
-        colsample_bytree=0.8189577147756041,
-        learning_rate=0.11986932069472364,
-        max_depth=8,
-        n_estimators=374,
-        subsample=0.6854480891474511
-    )
+    # Create the pipeline
+    pipeline = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('model', model)
+    ])
+    
+    return pipeline
 
 
-def _get_estimator():
-    """Combine the function transformers, column transformers, and model into a single pipeline."""
-    function_transformers = _get_function_transformers()
-    column_transformers = _get_column_transformers()
-    model = _get_model()
+def test_fit_and_submission(X_test, pipeline):
+    y_pred = pipeline.predict(X_test)
+    df_submission = pd.DataFrame(y_pred, columns=["log_bike_count"])
+    df_submission.index = X_test.index
+    df_submission.index.name = "Id"
+    df_submission.to_csv("test_pipeline.csv", index=True)
+    return df_submission
 
-    # Combine all components into a final pipeline
-    full_pipeline = Pipeline(
-        [
-            ("function_transformers", function_transformers),
-            ("column_transformers", column_transformers),
-            ("model", model),
-        ]
-    )
 
-    return full_pipeline
+
+
 
 
 def _column_rename(X):
