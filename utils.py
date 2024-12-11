@@ -545,7 +545,7 @@ def create_pipeline_TV(df, model=None):
         best_params = joblib.load("lightgbm_best_params.pkl")
         if "tree_method" in best_params:
             best_params["tree_method"] = "hist"  # Ensure compatibility with CPU
-        model = LGMBRegressor(**best_params)
+        model = LGBMRegressor(**best_params)
 
     # Create the pipeline
     pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])

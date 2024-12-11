@@ -11,8 +11,6 @@ parameters_LGBM = {'n_estimators': 197,
                    'random_state': 42
                    }
 
-
-
 parameters_RandomForest = {
     "n_estimators": 386,
     "max_depth": 26,
