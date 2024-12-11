@@ -13,8 +13,19 @@ from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
 from xgboost import XGBRegressor
+from lightgbm import LGMBRegressor
 import joblib
+from skrub import TableVectorizer
 
+columns_to_drop_test = [
+    "Station_Number",
+    "Measurement_Period_Duration",
+    "site_name",
+    "coordinates",
+    "Layer_1_Cloud_Base_Height_(m)",
+    "Sea_Level_Pressure_(hPa)",
+    "counter_name",
+]
 
 columns_to_drop_personal = [
     "date",
@@ -464,8 +475,8 @@ def get_and_process_data():
     data, data_test = _add_construction_work(data, data_test)
     data, data_test = _confinement_and_couvre_feu(data, data_test)
 
-    data = data.drop(columns=columns_to_drop_boruta1)
-    data_test = data_test.drop(columns=columns_to_drop_boruta1)
+    data = data.drop(columns=columns_to_drop_test)
+    data_test = data_test.drop(columns=columns_to_drop_test)
 
     X = data.drop(columns=["log_bike_count", "bike_count"])
     y = data["log_bike_count"]
@@ -506,6 +517,31 @@ def create_pipeline(df, model=None):
         if "tree_method" in best_params:
             best_params["tree_method"] = "hist"  # Ensure compatibility with CPU
         model = XGBRegressor(**best_params)
+
+    # Create the pipeline
+    pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
+
+    return pipeline
+
+
+def create_pipeline_TV(df, model=None):
+    # Define TableVectorizer for preprocessing
+    preprocessor = ColumnTransformer(
+        transformers=[
+            (
+                "vectorizer",
+                TableVectorizer(),
+                df.columns,
+            )  # Apply TableVectorizer to all columns
+        ]
+    )
+
+    # Use the provided model or initialize a default XGBRegressor
+    if model is None:
+        best_params = joblib.load("lightgbm_best_params.pkl")
+        if "tree_method" in best_params:
+            best_params["tree_method"] = "hist"  # Ensure compatibility with CPU
+        model = LGMBRegressor(**best_params)
 
     # Create the pipeline
     pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
