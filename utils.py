@@ -62,13 +62,6 @@ def _merge_external_data(X):
     threshold = len(external_conditions) * 0.4
     external_conditions = external_conditions.dropna(thresh=threshold, axis=1)
 
-    # Step 1: Sort the `external_conditions` DataFrame by the `date` column
-    external_conditions = external_conditions.sort_values(by='date')
-
-    # Drop columns with more than 40% NaN values
-    threshold = len(external_conditions) * 0.4
-    external_conditions = external_conditions.dropna(thresh=threshold, axis=1)
-
     # Step 2: Remove duplicate entries based on the `date` column
     external_conditions = external_conditions.drop_duplicates(subset='date')
 
@@ -117,6 +110,13 @@ def _process_datetime_features(X):
     except Exception as e:
         print(f"Error with school holidays mapping: {e}")
         df["is_school_holiday"] = 0
+
+    try:
+        dict_public_holidays = {date: f.is_bank_holiday(date, zone="Métropole") for date in unique_dates}
+        df["is_public_holiday"] = df["date"].dt.date.map(dict_public_holidays).fillna(0).astype(int)
+    except Exception as e:
+        print(f"Error with public holidays mapping: {e}")
+        df["is_public_holiday"] = 0
     
     return df
 
@@ -283,8 +283,8 @@ def get_and_process_data():
     data, data_test = _add_construction_work(data, data_test)
     data, data_test = _confinement_and_couvre_feu(data, data_test)
 
-    data = data.drop(columns=columns_to_drop)
-    data_test = data_test.drop(columns=columns_to_drop)
+    # data = data.drop(columns=columns_to_drop)
+    # data_test = data_test.drop(columns=columns_to_drop)
 
     X = data.drop(columns=['log_bike_count', 'bike_count'])
     y = data['log_bike_count']
