@@ -1,12 +1,8 @@
-import os
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import TimeSeriesSplit
 from vacances_scolaires_france import SchoolHolidayDates
-from datetime import date
 from jours_feries_france import JoursFeries
-from pathlib import Path
-
 from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
 from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.compose import ColumnTransformer
@@ -16,13 +12,233 @@ from xgboost import XGBRegressor
 import joblib
 from skrub import TableVectorizer
 from lightgbm import LGBMRegressor
-
 import best_params
-
 import optuna
 from sklearn.model_selection import cross_val_score
 
 
+# Run all feature engineering and selection functions
+def get_and_process_data():
+    data = pd.read_parquet("data/train.parquet")
+    data = _merge_external_data(data)
+    data = _column_rename(data)
+    data = _process_datetime_features(data)
+
+    data_test = pd.read_parquet("data/final_test.parquet")
+    data_test = _merge_external_data(data_test)
+    data_test = _column_rename(data_test)
+    data_test = _process_datetime_features(data_test)
+
+    data, data_test = _add_construction_work(data, data_test)
+    data, data_test = _confinement_and_couvre_feu(data, data_test)
+
+    data = data.drop(columns=columns_to_drop_test)
+    data_test = data_test.drop(columns=columns_to_drop_test)
+
+    X = data.drop(columns=["log_bike_count", "bike_count"])
+    y = data["log_bike_count"]
+
+    return X, y, data_test
+
+
+# First tried to build a custom pipeline by doing different column transforming according to the data type of each column
+def create_pipeline(df, model=None):
+    # Classify columns into categorical, numerical, and binary
+    categorical_columns = [col for col in df.columns if df[col].dtype == "object"]
+    numerical_columns = [
+        col
+        for col in df.columns
+        if pd.api.types.is_numeric_dtype(df[col]) and len(df[col].unique()) > 2
+    ]
+    binary_columns = [
+        col
+        for col in df.columns
+        if pd.api.types.is_numeric_dtype(df[col]) and len(df[col].unique()) == 2
+    ]
+
+    # Define preprocessing for each type of feature
+    categorical_transformer = OneHotEncoder(handle_unknown="ignore")
+    numerical_transformer = StandardScaler()
+
+    # Combine preprocessors in a column transformer
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("cat", categorical_transformer, categorical_columns),
+            ("num", numerical_transformer, numerical_columns),
+            ("passthrough", "passthrough", binary_columns),
+        ]
+    )
+
+    # Use the provided model or default to RandomForestClassifier
+    if model is None:
+        best_params_XGB = best_params.parameters_XGBoost
+        model = XGBRegressor(**best_params_XGB)
+
+    # Create the pipeline
+    pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
+
+    return pipeline
+
+
+# Then tried to use a Table Vectorizer to do the column transforming part, which ended up providing a better score in the prediction
+def create_pipeline_TV(df, model=None):
+    # Define TableVectorizer for preprocessing
+    preprocessor = ColumnTransformer(
+        transformers=[
+            (
+                "vectorizer",
+                TableVectorizer(),
+                df.columns,
+            )  # Apply TableVectorizer to all columns
+        ]
+    )
+
+    # Use the provided model or default to RandomForestClassifier
+    if model is None:
+        best_params_LGBM = best_params.parameters_LGBM
+        model = LGBMRegressor(**best_params_LGBM)
+
+    # Create the pipeline
+    pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
+
+    return pipeline
+
+
+# Used a pipeline with Optuna to tune the hyperparameters of the model with our pipeline.
+# Once the tuning was done, we would copy the best parameters and store them in the best_params.py file
+def objective(trial, X, y):
+    params = {
+        "n_estimators": trial.suggest_int("n_estimators", 50, 500),
+        "learning_rate": trial.suggest_loguniform("learning_rate", 1e-4, 0.1),
+        "max_depth": trial.suggest_int("max_depth", 3, 15),
+        "num_leaves": trial.suggest_int("num_leaves", 10, 200),
+        "min_child_samples": trial.suggest_int("min_child_samples", 5, 100),
+        "subsample": trial.suggest_uniform("subsample", 0.5, 1.0),
+        "colsample_bytree": trial.suggest_uniform("colsample_bytree", 0.5, 1.0),
+        "reg_alpha": trial.suggest_loguniform("reg_alpha", 1e-4, 10.0),
+        "reg_lambda": trial.suggest_loguniform("reg_lambda", 1e-4, 10.0),
+    }
+
+    # Define the preprocessor
+    preprocessor = ColumnTransformer(
+        transformers=[
+            (
+                "vectorizer",
+                TableVectorizer(),
+                list(X.columns),  # Use feature columns dynamically
+            )
+        ]
+    )
+
+    # Define the model and pipeline
+    model = LGBMRegressor(**params)
+    pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
+
+    # Perform cross-validation
+    scores = cross_val_score(pipeline, X, y, cv=3, scoring="neg_mean_squared_error", n_jobs=-1)
+    return -scores.mean()
+
+def create_pipeline_TV_with_optuna(X, y, n_trials=50):
+    # Initialize Optuna study
+    study = optuna.create_study(direction="minimize")
+    study.optimize(lambda trial: objective(trial, X, y), n_trials=n_trials)
+
+    # Get the best parameters
+    best_params = study.best_params
+    best_params["tree_method"] = "hist"  # Compatibility with CPU (in the case of training on the GPU before)
+
+    # Create the final pipeline with the best parameters
+    preprocessor = ColumnTransformer(
+        transformers=[
+            (
+                "vectorizer",
+                TableVectorizer(),
+                list(X.columns),  # Use feature columns dynamically
+            )
+        ]
+    )
+    model = LGBMRegressor(**best_params)
+    pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
+
+    return pipeline
+
+
+# Function used to predict and store the prediction in a csv file in the right format
+def test_fit_and_submission(X_test, pipeline):
+    y_pred = pipeline.predict(X_test)
+    df_submission = pd.DataFrame(y_pred, columns=["log_bike_count"])
+    df_submission.index = X_test.index
+    df_submission.index.name = "Id"
+    df_submission.to_csv("test_pipeline.csv", index=True)
+    return df_submission
+
+
+def _column_rename(X):
+    column_name_mapping = {
+        "numer_sta": "Station_Number",
+        "pmer": "Sea_Level_Pressure_(hPa)",
+        "tend": "Pressure_Tendency_(hPa/3h)",
+        "cod_tend": "Pressure_Tendency_Code",
+        "dd": "Wind_Direction_(°)",
+        "ff": "Wind_Speed_(m/s)",
+        "t": "Air_Temperature_(°C)",
+        "td": "Dew_Point_Temperature_(°C)",
+        "u": "Relative_Humidity_(%)",
+        "vv": "Visibility_(m)",
+        "ww": "Present_Weather_Code",
+        "w1": "Past_Weather_Code_1",
+        "w2": "Past_Weather_Code_2",
+        "n": "Total_Cloud_Cover_(oktas)",
+        "nbas": "Cloud_Base_Height_(m)",
+        "hbas": "Lowest_Cloud_Base_Height_(m)",
+        "cl": "Low_Cloud_Type",
+        "cm": "Medium_Cloud_Type",
+        "ch": "High_Cloud_Type",
+        "pres": "Station_Level_Pressure_(hPa)",
+        "niv_bar": "Barometer_Altitude_(m)",
+        "geop": "Geopotential_Height_(m)",
+        "tend24": "24h_Pressure_Tendency_(hPa)",
+        "tn12": "12h_Minimum_Temperature_(°C)",
+        "tn24": "24h_Minimum_Temperature_(°C)",
+        "tx12": "12h_Maximum_Temperature_(°C)",
+        "tx24": "24h_Maximum_Temperature_(°C)",
+        "tminsol": "Minimum_Soil_Temperature_(°C)",
+        "sw": "Sunshine_Duration_(hours)",
+        "tw": "Wet_Bulb_Temperature_(°C)",
+        "raf10": "10min_Max_Wind_Gust_(m/s)",
+        "rafper": "Max_Wind_Gust_(m/s)",
+        "per": "Measurement_Period_Duration",
+        "etat_sol": "Ground_State",
+        "ht_neige": "Snow_Height_(cm)",
+        "ssfrai": "New_Snow_Depth_(cm)",
+        "perssfrai": "New_Snowfall_Duration_(hours)",
+        "rr1": "Rainfall_(1h,_mm)",
+        "rr3": "Rainfall_(3h,_mm)",
+        "rr6": "Rainfall_(6h,_mm)",
+        "rr12": "Rainfall_(12h,_mm)",
+        "rr24": "Rainfall_(24h,_mm)",
+        "phenspe1": "Special_Weather_Phenomenon_1",
+        "phenspe2": "Special_Weather_Phenomenon_2",
+        "phenspe3": "Special_Weather_Phenomenon_3",
+        "phenspe4": "Special_Weather_Phenomenon_4",
+        "nnuage1": "Layer_1_Cloud_Cover_(oktas)",
+        "ctype1": "Layer_1_Cloud_Type",
+        "hnuage1": "Layer_1_Cloud_Base_Height_(m)",
+        "nnuage2": "Layer_2_Cloud_Cover_(oktas)",
+        "ctype2": "Layer_2_Cloud_Type",
+        "hnuage2": "Layer_2_Cloud_Base_Height_(m)",
+        "nnuage3": "Layer_3_Cloud_Cover_(oktas)",
+        "ctype3": "Layer_3_Cloud_Type",
+        "hnuage3": "Layer_3_Cloud_Base_Height_(m)",
+        "nnuage4": "Layer_4_Cloud_Cover_(oktas)",
+        "ctype4": "Layer_4_Cloud_Type",
+        "hnuage4": "Layer_4_Cloud_Base_Height_(m)",
+    }
+    external_conditions = X.rename(columns=column_name_mapping)
+    return external_conditions
+
+
+# Tried different set of features using personal comprehension of the context and the Boruta algorithm from sklearn
 columns_to_drop_test = [
     "Station_Number",
     "Measurement_Period_Duration",
@@ -238,28 +454,22 @@ def _merge_external_data(X):
     threshold = len(external_conditions) * 0.4
     external_conditions = external_conditions.dropna(thresh=threshold, axis=1)
 
-    # Step 2: Remove duplicate entries based on the `date` column
     external_conditions = external_conditions.drop_duplicates(subset="date")
 
-    # Step 3: Convert the 'date' column to datetime
     external_conditions["date"] = pd.to_datetime(external_conditions["date"])
 
-    # Step 4: Create a complete date range from the minimum to the maximum date in the DataFrame
     date_range = pd.date_range(
         start=external_conditions["date"].min(),
         end=external_conditions["date"].max(),
         freq="h",
     )
 
-    # Step 5: Create a DataFrame from the date_range
     date_range_df = pd.DataFrame(date_range, columns=["date"])
 
-    # Step 6: Merge the date_range DataFrame with the external_conditions DataFrame on the 'date' column
     full_external_conditions = pd.merge(
         date_range_df, external_conditions, on="date", how="left"
     )
 
-    # Apply the function to the DataFrame
     filled_external_conditions = fill_closest_value_all_columns(
         full_external_conditions
     )
@@ -269,13 +479,11 @@ def _merge_external_data(X):
 
 
 def _process_datetime_features(X):
-    # Ensure "date" is in datetime format
+    
     X["date"] = pd.to_datetime(X["date"], errors="coerce")
 
-    # Drop rows with invalid datetime entries
     df = X.dropna(subset=["date"])
 
-    # Extract date and time features
     df["year"] = df["date"].dt.year
     df["month"] = df["date"].dt.month
     df["weekday"] = df["date"].dt.dayofweek
@@ -283,7 +491,6 @@ def _process_datetime_features(X):
     df["hour"] = df["date"].dt.hour
     df["is_weekend"] = (df["weekday"] >= 5).astype(int)
 
-    # Handle school and public holidays
     unique_dates = df["date"].dt.date.unique()
     d = SchoolHolidayDates()
     f = JoursFeries()
@@ -465,230 +672,3 @@ def _confinement_and_couvre_feu(X, X_test):
         X.loc[in_couvre_feu_period & in_couvre_feu_hours, "couvre_feu"] = 1
 
     return X, X_test
-
-
-def get_and_process_data():
-    data = pd.read_parquet("data/train.parquet")
-    data = _merge_external_data(data)
-    data = _column_rename(data)
-    data = _process_datetime_features(data)
-
-    data_test = pd.read_parquet("data/final_test.parquet")
-    data_test = _merge_external_data(data_test)
-    data_test = _column_rename(data_test)
-    data_test = _process_datetime_features(data_test)
-
-    data, data_test = _add_construction_work(data, data_test)
-    data, data_test = _confinement_and_couvre_feu(data, data_test)
-
-    data = data.drop(columns=columns_to_drop_test)
-    data_test = data_test.drop(columns=columns_to_drop_test)
-
-    X = data.drop(columns=["log_bike_count", "bike_count"])
-    y = data["log_bike_count"]
-
-    return X, y, data_test
-
-
-def create_pipeline(df, model=None):
-    # Classify columns into categorical, numerical, and binary
-    categorical_columns = [col for col in df.columns if df[col].dtype == "object"]
-    numerical_columns = [
-        col
-        for col in df.columns
-        if pd.api.types.is_numeric_dtype(df[col]) and len(df[col].unique()) > 2
-    ]
-    binary_columns = [
-        col
-        for col in df.columns
-        if pd.api.types.is_numeric_dtype(df[col]) and len(df[col].unique()) == 2
-    ]
-
-    # Define preprocessing for each type of feature
-    categorical_transformer = OneHotEncoder(handle_unknown="ignore")
-    numerical_transformer = StandardScaler()
-
-    # Combine preprocessors in a column transformer
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("cat", categorical_transformer, categorical_columns),
-            ("num", numerical_transformer, numerical_columns),
-            ("passthrough", "passthrough", binary_columns),
-        ]
-    )
-
-    # Use the provided model or default to RandomForestClassifier
-    if model is None:
-        best_params = joblib.load("xg_boost_best_params.pkl")
-        if "tree_method" in best_params:
-            best_params["tree_method"] = "hist"  # Ensure compatibility with CPU
-        model = XGBRegressor(**best_params)
-
-    # Create the pipeline
-    pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
-
-    return pipeline
-
-
-def create_pipeline_TV(df, model=None):
-    # Define TableVectorizer for preprocessing
-    preprocessor = ColumnTransformer(
-        transformers=[
-            (
-                "vectorizer",
-                TableVectorizer(),
-                df.columns,
-            )  # Apply TableVectorizer to all columns
-        ]
-    )
-
-    # Use the provided model or initialize a default XGBRegressor
-    if model is None:
-        best_params = joblib.load("lightgbm_best_params.pkl")
-        if "tree_method" in best_params:
-            best_params["tree_method"] = "hist"  # Ensure compatibility with CPU
-        model = LGBMRegressor(**best_params)
-
-    # Create the pipeline
-    pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
-
-    return pipeline
-
-
-def objective(trial, X, y):
-    params = {
-        "n_estimators": trial.suggest_int("n_estimators", 50, 500),
-        "learning_rate": trial.suggest_loguniform("learning_rate", 1e-4, 0.1),
-        "max_depth": trial.suggest_int("max_depth", 3, 15),
-        "num_leaves": trial.suggest_int("num_leaves", 10, 200),
-        "min_child_samples": trial.suggest_int("min_child_samples", 5, 100),
-        "subsample": trial.suggest_uniform("subsample", 0.5, 1.0),
-        "colsample_bytree": trial.suggest_uniform("colsample_bytree", 0.5, 1.0),
-        "reg_alpha": trial.suggest_loguniform("reg_alpha", 1e-4, 10.0),
-        "reg_lambda": trial.suggest_loguniform("reg_lambda", 1e-4, 10.0),
-    }
-
-    # Define the preprocessor
-    preprocessor = ColumnTransformer(
-        transformers=[
-            (
-                "vectorizer",
-                TableVectorizer(),
-                list(X.columns),  # Use feature columns dynamically
-            )
-        ]
-    )
-
-    # Define the model and pipeline
-    model = LGBMRegressor(**params)
-    pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
-
-    # Perform cross-validation
-    scores = cross_val_score(pipeline, X, y, cv=3, scoring="neg_mean_squared_error", n_jobs=-1)
-    return -scores.mean()
-
-def create_pipeline_TV_with_optuna(X, y, n_trials=50):
-    # Initialize Optuna study
-    study = optuna.create_study(direction="minimize")
-    study.optimize(lambda trial: objective(trial, X, y), n_trials=n_trials)
-
-    # Get the best parameters
-    best_params = study.best_params
-    best_params["tree_method"] = "hist"  # Compatibility with CPU
-    joblib.dump(best_params, "lightgbm_best_params.pkl")  # Save best parameters
-
-    # Create the final pipeline with the best parameters
-    preprocessor = ColumnTransformer(
-        transformers=[
-            (
-                "vectorizer",
-                TableVectorizer(),
-                list(X.columns),  # Use feature columns dynamically
-            )
-        ]
-    )
-    model = LGBMRegressor(**best_params)
-    pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
-
-    return pipeline
-
-
-
-
-
-
-
-
-
-def test_fit_and_submission(X_test, pipeline):
-    y_pred = pipeline.predict(X_test)
-    df_submission = pd.DataFrame(y_pred, columns=["log_bike_count"])
-    df_submission.index = X_test.index
-    df_submission.index.name = "Id"
-    df_submission.to_csv("test_pipeline.csv", index=True)
-    return df_submission
-
-
-def _column_rename(X):
-    column_name_mapping = {
-        "numer_sta": "Station_Number",
-        "pmer": "Sea_Level_Pressure_(hPa)",
-        "tend": "Pressure_Tendency_(hPa/3h)",
-        "cod_tend": "Pressure_Tendency_Code",
-        "dd": "Wind_Direction_(°)",
-        "ff": "Wind_Speed_(m/s)",
-        "t": "Air_Temperature_(°C)",
-        "td": "Dew_Point_Temperature_(°C)",
-        "u": "Relative_Humidity_(%)",
-        "vv": "Visibility_(m)",
-        "ww": "Present_Weather_Code",
-        "w1": "Past_Weather_Code_1",
-        "w2": "Past_Weather_Code_2",
-        "n": "Total_Cloud_Cover_(oktas)",
-        "nbas": "Cloud_Base_Height_(m)",
-        "hbas": "Lowest_Cloud_Base_Height_(m)",
-        "cl": "Low_Cloud_Type",
-        "cm": "Medium_Cloud_Type",
-        "ch": "High_Cloud_Type",
-        "pres": "Station_Level_Pressure_(hPa)",
-        "niv_bar": "Barometer_Altitude_(m)",
-        "geop": "Geopotential_Height_(m)",
-        "tend24": "24h_Pressure_Tendency_(hPa)",
-        "tn12": "12h_Minimum_Temperature_(°C)",
-        "tn24": "24h_Minimum_Temperature_(°C)",
-        "tx12": "12h_Maximum_Temperature_(°C)",
-        "tx24": "24h_Maximum_Temperature_(°C)",
-        "tminsol": "Minimum_Soil_Temperature_(°C)",
-        "sw": "Sunshine_Duration_(hours)",
-        "tw": "Wet_Bulb_Temperature_(°C)",
-        "raf10": "10min_Max_Wind_Gust_(m/s)",
-        "rafper": "Max_Wind_Gust_(m/s)",
-        "per": "Measurement_Period_Duration",
-        "etat_sol": "Ground_State",
-        "ht_neige": "Snow_Height_(cm)",
-        "ssfrai": "New_Snow_Depth_(cm)",
-        "perssfrai": "New_Snowfall_Duration_(hours)",
-        "rr1": "Rainfall_(1h,_mm)",
-        "rr3": "Rainfall_(3h,_mm)",
-        "rr6": "Rainfall_(6h,_mm)",
-        "rr12": "Rainfall_(12h,_mm)",
-        "rr24": "Rainfall_(24h,_mm)",
-        "phenspe1": "Special_Weather_Phenomenon_1",
-        "phenspe2": "Special_Weather_Phenomenon_2",
-        "phenspe3": "Special_Weather_Phenomenon_3",
-        "phenspe4": "Special_Weather_Phenomenon_4",
-        "nnuage1": "Layer_1_Cloud_Cover_(oktas)",
-        "ctype1": "Layer_1_Cloud_Type",
-        "hnuage1": "Layer_1_Cloud_Base_Height_(m)",
-        "nnuage2": "Layer_2_Cloud_Cover_(oktas)",
-        "ctype2": "Layer_2_Cloud_Type",
-        "hnuage2": "Layer_2_Cloud_Base_Height_(m)",
-        "nnuage3": "Layer_3_Cloud_Cover_(oktas)",
-        "ctype3": "Layer_3_Cloud_Type",
-        "hnuage3": "Layer_3_Cloud_Base_Height_(m)",
-        "nnuage4": "Layer_4_Cloud_Cover_(oktas)",
-        "ctype4": "Layer_4_Cloud_Type",
-        "hnuage4": "Layer_4_Cloud_Base_Height_(m)",
-    }
-    external_conditions = X.rename(columns=column_name_mapping)
-    return external_conditions

@@ -8,7 +8,7 @@ parameters_LGBM = {'n_estimators': 197,
                    'reg_alpha': 0.00976316036669102, 
                    'reg_lambda': 0.2548842907160891, 
                    'tree_method': 'hist',
-                   'random_state': 42
+                   'random_state': 100
                    }
 
 parameters_RandomForest = {
