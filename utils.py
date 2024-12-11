@@ -13,11 +13,12 @@ from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
 from xgboost import XGBRegressor
+import joblib
 
 
 
 
-columns_to_drop = [
+columns_to_drop_personal = [
                 'date', 'counter_installation_date', 'Cloud_Base_Height_(m)',
                 'counter_id', 'site_id', 'site_name', 'counter_technical_id',
                 'coordinates', 'Station_Level_Pressure_(hPa)', 'Pressure_Tendency_Code',
@@ -33,6 +34,29 @@ columns_to_drop = [
                 '24h_Pressure_Tendency_(hPa)', 'Sea_Level_Pressure_(hPa)', 
 
 ]
+
+columns_to_drop_boruta1 = [
+        'counter_installation_date',
+        'Station_Number', 'Sea_Level_Pressure_(hPa)',
+        'Pressure_Tendency_(hPa/3h)', 'Pressure_Tendency_Code',
+        'Wind_Direction_(°)', 'Wind_Speed_(m/s)',
+        'Dew_Point_Temperature_(°C)', 'Relative_Humidity_(%)', 'Visibility_(m)',
+        'Present_Weather_Code', 'Past_Weather_Code_1', 'Past_Weather_Code_2',
+        'Total_Cloud_Cover_(oktas)', 'Cloud_Base_Height_(m)',
+        'Lowest_Cloud_Base_Height_(m)', 'Low_Cloud_Type', 'Medium_Cloud_Type',
+        'High_Cloud_Type', 'Station_Level_Pressure_(hPa)',
+        '24h_Pressure_Tendency_(hPa)', '10min_Max_Wind_Gust_(m/s)',
+        'Max_Wind_Gust_(m/s)', 'Measurement_Period_Duration', 'Ground_State',
+        'Snow_Height_(cm)', 'New_Snow_Depth_(cm)',
+        'New_Snowfall_Duration_(hours)', 'Rainfall_(1h,_mm)',
+        'Rainfall_(3h,_mm)', 'Rainfall_(6h,_mm)', 'Rainfall_(12h,_mm)',
+        'Rainfall_(24h,_mm)', 'Layer_1_Cloud_Cover_(oktas)',
+        'Layer_1_Cloud_Type', 'Layer_1_Cloud_Base_Height_(m)',
+        'Layer_2_Cloud_Cover_(oktas)', 'Layer_2_Cloud_Type',
+        'Layer_2_Cloud_Base_Height_(m)', 'year', 'day',
+        'is_school_holiday', 'is_public_holiday',
+        ]
+
 
 # Fonction qui fait ce qu'on voulait faire avec ffill et bfill mais a la place prends la valeur la plus proche
 def fill_closest_value_all_columns(df):
@@ -283,8 +307,8 @@ def get_and_process_data():
     data, data_test = _add_construction_work(data, data_test)
     data, data_test = _confinement_and_couvre_feu(data, data_test)
 
-    # data = data.drop(columns=columns_to_drop)
-    # data_test = data_test.drop(columns=columns_to_drop)
+    data = data.drop(columns=columns_to_drop_boruta1)
+    data_test = data_test.drop(columns=columns_to_drop_boruta1)
 
     X = data.drop(columns=['log_bike_count', 'bike_count'])
     y = data['log_bike_count']
@@ -293,7 +317,6 @@ def get_and_process_data():
 
 
 def create_pipeline(df, model=None):
-
     # Classify columns into categorical, numerical, and binary
     categorical_columns = [col for col in df.columns if df[col].dtype == 'object']
     numerical_columns = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col]) and len(df[col].unique()) > 2]
@@ -314,14 +337,10 @@ def create_pipeline(df, model=None):
 
     # Use the provided model or default to RandomForestClassifier
     if model is None:
-        model = RandomForestRegressor(
-        n_estimators=50,          # Reduce the number of trees
-        max_depth=5,              # Limit the depth of each tree
-        min_samples_split=10,     # Require more samples to split
-        min_samples_leaf=5,       # Require more samples in leaf nodes
-        random_state=42           # Ensure reproducibility
-    )
-
+        best_params = joblib.load('xg_boost_best_params.pkl')
+        if 'tree_method' in best_params:
+            best_params['tree_method'] = 'hist'  # Ensure compatibility with CPU
+        model = XGBRegressor(**best_params)
 
     # Create the pipeline
     pipeline = Pipeline(steps=[
@@ -330,6 +349,7 @@ def create_pipeline(df, model=None):
     ])
     
     return pipeline
+
 
 
 def test_fit_and_submission(X_test, pipeline):
