@@ -7,7 +7,8 @@ parameters_LGBM = {
     'subsample': 0.9780988187891623, 
     'colsample_bytree': 0.5674447421613202, 
     'reg_alpha': 0.017452874384819947, 
-    'reg_lambda': 0.016441626967583507
+    'reg_lambda': 0.016441626967583507,
+    'random_state': 42,
     }
 
 
@@ -17,5 +18,6 @@ parameters_RandomForest =  {
     'min_samples_split': 5, 
     'min_samples_leaf': 2, 
     'max_features': 'sqrt', 
-    'bootstrap': False
+    'bootstrap': False,
+    'random_state': 42,
     }
