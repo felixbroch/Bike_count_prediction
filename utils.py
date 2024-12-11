@@ -13,9 +13,13 @@ from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
 from xgboost import XGBRegressor
-from lightgbm import LGMBRegressor
 import joblib
 from skrub import TableVectorizer
+from lightgbm import LGBMRegressor
+
+import optuna
+from sklearn.model_selection import cross_val_score
+
 
 columns_to_drop_test = [
     "Station_Number",
@@ -547,6 +551,71 @@ def create_pipeline_TV(df, model=None):
     pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
 
     return pipeline
+
+
+def objective(trial, X, y):
+    params = {
+        "n_estimators": trial.suggest_int("n_estimators", 50, 500),
+        "learning_rate": trial.suggest_loguniform("learning_rate", 1e-4, 0.1),
+        "max_depth": trial.suggest_int("max_depth", 3, 15),
+        "num_leaves": trial.suggest_int("num_leaves", 10, 200),
+        "min_child_samples": trial.suggest_int("min_child_samples", 5, 100),
+        "subsample": trial.suggest_uniform("subsample", 0.5, 1.0),
+        "colsample_bytree": trial.suggest_uniform("colsample_bytree", 0.5, 1.0),
+        "reg_alpha": trial.suggest_loguniform("reg_alpha", 1e-4, 10.0),
+        "reg_lambda": trial.suggest_loguniform("reg_lambda", 1e-4, 10.0),
+    }
+
+    # Define the preprocessor
+    preprocessor = ColumnTransformer(
+        transformers=[
+            (
+                "vectorizer",
+                TableVectorizer(),
+                list(X.columns),  # Use feature columns dynamically
+            )
+        ]
+    )
+
+    # Define the model and pipeline
+    model = LGBMRegressor(**params)
+    pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
+
+    # Perform cross-validation
+    scores = cross_val_score(pipeline, X, y, cv=3, scoring="neg_mean_squared_error", n_jobs=-1)
+    return -scores.mean()
+
+def create_pipeline_TV_with_optuna(X, y, n_trials=50):
+    # Initialize Optuna study
+    study = optuna.create_study(direction="minimize")
+    study.optimize(lambda trial: objective(trial, X, y), n_trials=n_trials)
+
+    # Get the best parameters
+    best_params = study.best_params
+    best_params["tree_method"] = "hist"  # Compatibility with CPU
+    joblib.dump(best_params, "lightgbm_best_params.pkl")  # Save best parameters
+
+    # Create the final pipeline with the best parameters
+    preprocessor = ColumnTransformer(
+        transformers=[
+            (
+                "vectorizer",
+                TableVectorizer(),
+                list(X.columns),  # Use feature columns dynamically
+            )
+        ]
+    )
+    model = LGBMRegressor(**best_params)
+    pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
+
+    return pipeline
+
+
+
+
+
+
+
 
 
 def test_fit_and_submission(X_test, pipeline):
