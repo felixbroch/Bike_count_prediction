@@ -17,6 +17,8 @@ import joblib
 from skrub import TableVectorizer
 from lightgbm import LGBMRegressor
 
+import best_params
+
 import optuna
 from sklearn.model_selection import cross_val_score
 
@@ -542,10 +544,8 @@ def create_pipeline_TV(df, model=None):
 
     # Use the provided model or initialize a default XGBRegressor
     if model is None:
-        best_params = joblib.load("lightgbm_best_params.pkl")
-        if "tree_method" in best_params:
-            best_params["tree_method"] = "hist"  # Ensure compatibility with CPU
-        model = LGMBRegressor(**best_params)
+        best_params_RF = best_params.parameters_RandomForest
+        model = RandomForestRegressor(**best_params_RF)
 
     # Create the pipeline
     pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
