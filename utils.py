@@ -17,6 +17,8 @@ import joblib
 from skrub import TableVectorizer
 from lightgbm import LGBMRegressor
 
+import best_params
+
 import optuna
 from sklearn.model_selection import cross_val_score
 
