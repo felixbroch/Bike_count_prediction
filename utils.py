@@ -16,94 +16,237 @@ from xgboost import XGBRegressor
 import joblib
 
 
-
-
 columns_to_drop_personal = [
-                'date', 'counter_installation_date', 'Cloud_Base_Height_(m)',
-                'counter_id', 'site_id', 'site_name', 'counter_technical_id',
-                'coordinates', 'Station_Level_Pressure_(hPa)', 'Pressure_Tendency_Code',
-                'Station_Number', 'Measurement_Period_Duration', 'Measurement_Period_Duration',
-                'Layer_1_Cloud_Base_Height_(m)', 'Present_Weather_Code', 'Past_Weather_Code_1',
-                'Past_Weather_Code_2', 'Rainfall_(1h,_mm)', 'Rainfall_(6h,_mm)',
-                'Rainfall_(24h,_mm)', 'Wind_Direction_(°)', 'Dew_Point_Temperature_(°C)',
-                'Lowest_Cloud_Base_Height_(m)', 'Low_Cloud_Type', 'Medium_Cloud_Type',
-                'High_Cloud_Type', '10min_Max_Wind_Gust_(m/s)', 'Ground_State',
-                'New_Snow_Depth_(cm)', 'New_Snowfall_Duration_(hours)',
-                'Layer_1_Cloud_Cover_(oktas)', 'Layer_1_Cloud_Type', 'Layer_2_Cloud_Cover_(oktas)',
-                'Layer_2_Cloud_Type', 'Layer_2_Cloud_Base_Height_(m)', 'Max_Wind_Gust_(m/s)',
-                '24h_Pressure_Tendency_(hPa)', 'Sea_Level_Pressure_(hPa)', 
+    "date",
+    "counter_installation_date",
+    "Cloud_Base_Height_(m)",
+    "counter_id",
+    "site_id",
+    "site_name",
+    "counter_technical_id",
+    "coordinates",
+    "Station_Level_Pressure_(hPa)",
+    "Pressure_Tendency_Code",
+    "Station_Number",
+    "Measurement_Period_Duration",
+    "Measurement_Period_Duration",
+    "Layer_1_Cloud_Base_Height_(m)",
+    "Present_Weather_Code",
+    "Past_Weather_Code_1",
+    "Past_Weather_Code_2",
+    "Rainfall_(1h,_mm)",
+    "Rainfall_(6h,_mm)",
+    "Rainfall_(24h,_mm)",
+    "Wind_Direction_(°)",
+    "Dew_Point_Temperature_(°C)",
+    "Lowest_Cloud_Base_Height_(m)",
+    "Low_Cloud_Type",
+    "Medium_Cloud_Type",
+    "High_Cloud_Type",
+    "10min_Max_Wind_Gust_(m/s)",
+    "Ground_State",
+    "New_Snow_Depth_(cm)",
+    "New_Snowfall_Duration_(hours)",
+    "Layer_1_Cloud_Cover_(oktas)",
+    "Layer_1_Cloud_Type",
+    "Layer_2_Cloud_Cover_(oktas)",
+    "Layer_2_Cloud_Type",
+    "Layer_2_Cloud_Base_Height_(m)",
+    "Max_Wind_Gust_(m/s)",
+    "24h_Pressure_Tendency_(hPa)",
+    "Sea_Level_Pressure_(hPa)",
+]
 
+columns_to_drop_correlation = [
+    "site_name",
+    "date",
+    "counter_installation_date",
+    "coordinates",
+    "longitude",
+    "Station_Number",
+    "Sea_Level_Pressure_(hPa)",
+    "Pressure_Tendency_(hPa/3h)",
+    "Pressure_Tendency_Code",
+    "Wind_Direction_(°)",
+    "Wind_Speed_(m/s)",
+    "Visibility_(m)",
+    "Present_Weather_Code",
+    "Past_Weather_Code_1",
+    "Past_Weather_Code_2",
+    "Total_Cloud_Cover_(oktas)",
+    "Cloud_Base_Height_(m)",
+    "Medium_Cloud_Type",
+    "High_Cloud_Type",
+    "Station_Level_Pressure_(hPa)",
+    "24h_Pressure_Tendency_(hPa)",
+    "Max_Wind_Gust_(m/s)",
+    "Measurement_Period_Duration",
+    "Snow_Height_(cm)",
+    "New_Snow_Depth_(cm)",
+    "New_Snowfall_Duration_(hours)",
+    "Rainfall_(1h,_mm)",
+    "Rainfall_(3h,_mm)",
+    "Rainfall_(6h,_mm)",
+    "Rainfall_(12h,_mm)",
+    "Rainfall_(24h,_mm)",
+    "Layer_1_Cloud_Base_Height_(m)",
+    "Layer_2_Cloud_Type",
+    "year",
+    "month",
+    "day",
+    "is_school_holiday",
+]
+
+columns_to_drop_random = [
+    "site_id",
+    "site_name",
+    "counter_installation_date",
+    "Station_Number",
+    "Sea_Level_Pressure_(hPa)",
+    "Pressure_Tendency_(hPa/3h)",
+    "Pressure_Tendency_Code",
+    "Wind_Direction_(°)",
+    "Wind_Speed_(m/s)",
+    "Dew_Point_Temperature_(°C)",
+    "Relative_Humidity_(%)",
+    "Visibility_(m)",
+    "Present_Weather_Code",
+    "Past_Weather_Code_1",
+    "Past_Weather_Code_2",
+    "Total_Cloud_Cover_(oktas)",
+    "Cloud_Base_Height_(m)",
+    "Lowest_Cloud_Base_Height_(m)",
+    "Low_Cloud_Type",
+    "Medium_Cloud_Type",
+    "High_Cloud_Type",
+    "Station_Level_Pressure_(hPa)",
+    "24h_Pressure_Tendency_(hPa)",
+    "10min_Max_Wind_Gust_(m/s)",
+    "Max_Wind_Gust_(m/s)",
+    "Measurement_Period_Duration",
+    "Ground_State",
+    "Snow_Height_(cm)",
+    "New_Snow_Depth_(cm)",
+    "New_Snowfall_Duration_(hours)",
+    "Rainfall_(1h,_mm)",
+    "Rainfall_(3h,_mm)",
+    "Rainfall_(6h,_mm)",
+    "Rainfall_(12h,_mm)",
+    "Rainfall_(24h,_mm)",
+    "Layer_1_Cloud_Cover_(oktas)",
+    "Layer_1_Cloud_Type",
+    "Layer_1_Cloud_Base_Height_(m)",
+    "Layer_2_Cloud_Cover_(oktas)",
+    "Layer_2_Cloud_Type",
+    "Layer_2_Cloud_Base_Height_(m)",
+    "year",
+    "is_school_holiday",
+    "is_public_holiday",
 ]
 
 columns_to_drop_boruta1 = [
-        'counter_installation_date',
-        'Station_Number', 'Sea_Level_Pressure_(hPa)',
-        'Pressure_Tendency_(hPa/3h)', 'Pressure_Tendency_Code',
-        'Wind_Direction_(°)', 'Wind_Speed_(m/s)',
-        'Dew_Point_Temperature_(°C)', 'Relative_Humidity_(%)', 'Visibility_(m)',
-        'Present_Weather_Code', 'Past_Weather_Code_1', 'Past_Weather_Code_2',
-        'Total_Cloud_Cover_(oktas)', 'Cloud_Base_Height_(m)',
-        'Lowest_Cloud_Base_Height_(m)', 'Low_Cloud_Type', 'Medium_Cloud_Type',
-        'High_Cloud_Type', 'Station_Level_Pressure_(hPa)',
-        '24h_Pressure_Tendency_(hPa)', '10min_Max_Wind_Gust_(m/s)',
-        'Max_Wind_Gust_(m/s)', 'Measurement_Period_Duration', 'Ground_State',
-        'Snow_Height_(cm)', 'New_Snow_Depth_(cm)',
-        'New_Snowfall_Duration_(hours)', 'Rainfall_(1h,_mm)',
-        'Rainfall_(3h,_mm)', 'Rainfall_(6h,_mm)', 'Rainfall_(12h,_mm)',
-        'Rainfall_(24h,_mm)', 'Layer_1_Cloud_Cover_(oktas)',
-        'Layer_1_Cloud_Type', 'Layer_1_Cloud_Base_Height_(m)',
-        'Layer_2_Cloud_Cover_(oktas)', 'Layer_2_Cloud_Type',
-        'Layer_2_Cloud_Base_Height_(m)', 'year', 'day',
-        'is_school_holiday', 'is_public_holiday',
-        ]
+    "counter_installation_date",
+    "Station_Number",
+    "Sea_Level_Pressure_(hPa)",
+    "Pressure_Tendency_(hPa/3h)",
+    "Pressure_Tendency_Code",
+    "Wind_Direction_(°)",
+    "Wind_Speed_(m/s)",
+    "Dew_Point_Temperature_(°C)",
+    "Relative_Humidity_(%)",
+    "Visibility_(m)",
+    "Present_Weather_Code",
+    "Past_Weather_Code_1",
+    "Past_Weather_Code_2",
+    "Total_Cloud_Cover_(oktas)",
+    "Cloud_Base_Height_(m)",
+    "Lowest_Cloud_Base_Height_(m)",
+    "Low_Cloud_Type",
+    "Medium_Cloud_Type",
+    "High_Cloud_Type",
+    "Station_Level_Pressure_(hPa)",
+    "24h_Pressure_Tendency_(hPa)",
+    "10min_Max_Wind_Gust_(m/s)",
+    "Max_Wind_Gust_(m/s)",
+    "Measurement_Period_Duration",
+    "Ground_State",
+    "Snow_Height_(cm)",
+    "New_Snow_Depth_(cm)",
+    "New_Snowfall_Duration_(hours)",
+    "Rainfall_(1h,_mm)",
+    "Rainfall_(3h,_mm)",
+    "Rainfall_(6h,_mm)",
+    "Rainfall_(12h,_mm)",
+    "Rainfall_(24h,_mm)",
+    "Layer_1_Cloud_Cover_(oktas)",
+    "Layer_1_Cloud_Type",
+    "Layer_1_Cloud_Base_Height_(m)",
+    "Layer_2_Cloud_Cover_(oktas)",
+    "Layer_2_Cloud_Type",
+    "Layer_2_Cloud_Base_Height_(m)",
+    "year",
+    "day",
+    "is_school_holiday",
+    "is_public_holiday",
+]
 
 
 # Fonction qui fait ce qu'on voulait faire avec ffill et bfill mais a la place prends la valeur la plus proche
 def fill_closest_value_all_columns(df):
     """Fill NaN values with the closest value for all numeric columns in the DataFrame."""
     filled_df = df.copy()
-    
+
     for column in filled_df.columns:
-        if filled_df[column].dtype.kind in 'biufc':  # Numeric columns
+        if filled_df[column].dtype.kind in "biufc":  # Numeric columns
             non_nan_values = filled_df[column].dropna()
-            
+
             def find_closest(value):
                 if pd.isna(value):
-                    closest_value = non_nan_values.iloc[(non_nan_values - value).abs().argmin()]
+                    closest_value = non_nan_values.iloc[
+                        (non_nan_values - value).abs().argmin()
+                    ]
                     return closest_value
                 return value
-            
+
             filled_df[column] = filled_df[column].apply(find_closest)
-    
+
     return filled_df
 
 
 def _merge_external_data(X):
-    external_conditions = pd.read_csv('data/external_data.csv')
-    external_conditions['date'] = pd.to_datetime(external_conditions['date'])
+    external_conditions = pd.read_csv("data/external_data.csv")
+    external_conditions["date"] = pd.to_datetime(external_conditions["date"])
 
     # Drop columns with more than 40% NaN values
     threshold = len(external_conditions) * 0.4
     external_conditions = external_conditions.dropna(thresh=threshold, axis=1)
 
     # Step 2: Remove duplicate entries based on the `date` column
-    external_conditions = external_conditions.drop_duplicates(subset='date')
+    external_conditions = external_conditions.drop_duplicates(subset="date")
 
     # Step 3: Convert the 'date' column to datetime
-    external_conditions['date'] = pd.to_datetime(external_conditions['date'])
+    external_conditions["date"] = pd.to_datetime(external_conditions["date"])
 
     # Step 4: Create a complete date range from the minimum to the maximum date in the DataFrame
-    date_range = pd.date_range(start=external_conditions['date'].min(), end=external_conditions['date'].max(), freq='h')
+    date_range = pd.date_range(
+        start=external_conditions["date"].min(),
+        end=external_conditions["date"].max(),
+        freq="h",
+    )
 
     # Step 5: Create a DataFrame from the date_range
-    date_range_df = pd.DataFrame(date_range, columns=['date'])
+    date_range_df = pd.DataFrame(date_range, columns=["date"])
 
     # Step 6: Merge the date_range DataFrame with the external_conditions DataFrame on the 'date' column
-    full_external_conditions = pd.merge(date_range_df, external_conditions, on='date', how='left')
+    full_external_conditions = pd.merge(
+        date_range_df, external_conditions, on="date", how="left"
+    )
 
     # Apply the function to the DataFrame
-    filled_external_conditions = fill_closest_value_all_columns(full_external_conditions)
-    merged_conditions = pd.merge(X, filled_external_conditions, on='date', how='left')
+    filled_external_conditions = fill_closest_value_all_columns(
+        full_external_conditions
+    )
+    merged_conditions = pd.merge(X, filled_external_conditions, on="date", how="left")
 
     return merged_conditions
 
@@ -129,19 +272,27 @@ def _process_datetime_features(X):
     f = JoursFeries()
 
     try:
-        dict_school_holidays = {date: d.is_holiday_for_zone(date, "C") for date in unique_dates}
-        df["is_school_holiday"] = df["date"].dt.date.map(dict_school_holidays).fillna(0).astype(int)
+        dict_school_holidays = {
+            date: d.is_holiday_for_zone(date, "C") for date in unique_dates
+        }
+        df["is_school_holiday"] = (
+            df["date"].dt.date.map(dict_school_holidays).fillna(0).astype(int)
+        )
     except Exception as e:
         print(f"Error with school holidays mapping: {e}")
         df["is_school_holiday"] = 0
 
     try:
-        dict_public_holidays = {date: f.is_bank_holiday(date, zone="Métropole") for date in unique_dates}
-        df["is_public_holiday"] = df["date"].dt.date.map(dict_public_holidays).fillna(0).astype(int)
+        dict_public_holidays = {
+            date: f.is_bank_holiday(date, zone="Métropole") for date in unique_dates
+        }
+        df["is_public_holiday"] = (
+            df["date"].dt.date.map(dict_public_holidays).fillna(0).astype(int)
+        )
     except Exception as e:
         print(f"Error with public holidays mapping: {e}")
         df["is_public_holiday"] = 0
-    
+
     return df
 
 
@@ -249,15 +400,15 @@ def _add_construction_work(df, df_test):
         & (df["counter_name"] == "Voie Georges Pompidou SO-NE")
     ] = 0
 
-    df_test['road_work'] = 0
+    df_test["road_work"] = 0
 
     return df, df_test
 
 
 def _confinement_and_couvre_feu(X, X_test):
     confinements = [
-    ("2020-10-30", "2020-12-14", "confinement"),
-    ("2021-04-03", "2021-05-19", "confinement"), 
+        ("2020-10-30", "2020-12-14", "confinement"),
+        ("2021-04-03", "2021-05-19", "confinement"),
     ]
 
     couvre_feux = [
@@ -269,8 +420,14 @@ def _confinement_and_couvre_feu(X, X_test):
         ("2021-06-09", "2021-06-19", "23:00", "06:00", "couvre-feu"),
     ]
 
-    confinements = [(pd.to_datetime(start), pd.to_datetime(end), label) for start, end, label in confinements]
-    couvre_feux = [(pd.to_datetime(start), pd.to_datetime(end), start_hour, end_hour, label) for start, end, start_hour, end_hour, label in couvre_feux]
+    confinements = [
+        (pd.to_datetime(start), pd.to_datetime(end), label)
+        for start, end, label in confinements
+    ]
+    couvre_feux = [
+        (pd.to_datetime(start), pd.to_datetime(end), start_hour, end_hour, label)
+        for start, end, start_hour, end_hour, label in couvre_feux
+    ]
 
     X["confinement"] = 0
     X["couvre_feu"] = 0
@@ -282,15 +439,15 @@ def _confinement_and_couvre_feu(X, X_test):
         X.loc[(X["date"] >= start) & (X["date"] <= end), "confinement"] = 1
 
     for start, end, start_hour, end_hour, label in couvre_feux:
-
         in_couvre_feu_period = (X["date"] >= start) & (X["date"] <= end)
 
-        in_couvre_feu_hours = (X["date"].dt.time >= pd.to_datetime(start_hour).time()) | (X["date"].dt.time <= pd.to_datetime(end_hour).time())
+        in_couvre_feu_hours = (
+            X["date"].dt.time >= pd.to_datetime(start_hour).time()
+        ) | (X["date"].dt.time <= pd.to_datetime(end_hour).time())
 
         X.loc[in_couvre_feu_period & in_couvre_feu_hours, "couvre_feu"] = 1
 
     return X, X_test
-
 
 
 def get_and_process_data():
@@ -310,46 +467,50 @@ def get_and_process_data():
     data = data.drop(columns=columns_to_drop_boruta1)
     data_test = data_test.drop(columns=columns_to_drop_boruta1)
 
-    X = data.drop(columns=['log_bike_count', 'bike_count'])
-    y = data['log_bike_count']
+    X = data.drop(columns=["log_bike_count", "bike_count"])
+    y = data["log_bike_count"]
 
     return X, y, data_test
 
 
 def create_pipeline(df, model=None):
     # Classify columns into categorical, numerical, and binary
-    categorical_columns = [col for col in df.columns if df[col].dtype == 'object']
-    numerical_columns = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col]) and len(df[col].unique()) > 2]
-    binary_columns = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col]) and len(df[col].unique()) == 2]
+    categorical_columns = [col for col in df.columns if df[col].dtype == "object"]
+    numerical_columns = [
+        col
+        for col in df.columns
+        if pd.api.types.is_numeric_dtype(df[col]) and len(df[col].unique()) > 2
+    ]
+    binary_columns = [
+        col
+        for col in df.columns
+        if pd.api.types.is_numeric_dtype(df[col]) and len(df[col].unique()) == 2
+    ]
 
     # Define preprocessing for each type of feature
-    categorical_transformer = OneHotEncoder(handle_unknown='ignore')
+    categorical_transformer = OneHotEncoder(handle_unknown="ignore")
     numerical_transformer = StandardScaler()
 
     # Combine preprocessors in a column transformer
     preprocessor = ColumnTransformer(
         transformers=[
-            ('cat', categorical_transformer, categorical_columns),
-            ('num', numerical_transformer, numerical_columns),
-            ('passthrough', 'passthrough', binary_columns),
+            ("cat", categorical_transformer, categorical_columns),
+            ("num", numerical_transformer, numerical_columns),
+            ("passthrough", "passthrough", binary_columns),
         ]
     )
 
     # Use the provided model or default to RandomForestClassifier
     if model is None:
-        best_params = joblib.load('xg_boost_best_params.pkl')
-        if 'tree_method' in best_params:
-            best_params['tree_method'] = 'hist'  # Ensure compatibility with CPU
+        best_params = joblib.load("xg_boost_best_params.pkl")
+        if "tree_method" in best_params:
+            best_params["tree_method"] = "hist"  # Ensure compatibility with CPU
         model = XGBRegressor(**best_params)
 
     # Create the pipeline
-    pipeline = Pipeline(steps=[
-        ('preprocessor', preprocessor),
-        ('model', model)
-    ])
-    
-    return pipeline
+    pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
 
+    return pipeline
 
 
 def test_fit_and_submission(X_test, pipeline):
@@ -359,10 +520,6 @@ def test_fit_and_submission(X_test, pipeline):
     df_submission.index.name = "Id"
     df_submission.to_csv("test_pipeline.csv", index=True)
     return df_submission
-
-
-
-
 
 
 def _column_rename(X):
