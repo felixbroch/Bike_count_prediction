@@ -1,3 +1,12 @@
+"""
+Utility functions for bike count prediction project.
+
+This module contains data preprocessing, pipeline creation, and model training utilities
+for predicting bike counts in Paris using historical data and weather information.
+
+Author: Felix Brochier and Gregoire Bidault
+"""
+
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import TimeSeriesSplit
@@ -17,8 +26,25 @@ import optuna
 from sklearn.model_selection import cross_val_score
 
 
-# Run all feature engineering and selection functions
 def get_and_process_data():
+    """
+    Load and preprocess training and test data for bike count prediction.
+    
+    This function performs the complete data preprocessing pipeline including:
+    - Loading parquet files for training and test data
+    - Merging external weather data
+    - Renaming columns for better readability
+    - Processing datetime features
+    - Adding construction work indicators
+    - Adding confinement and curfew indicators
+    - Dropping unnecessary columns
+    
+    Returns:
+        tuple: (X, y, data_test) where:
+            - X: Preprocessed training features (pd.DataFrame)
+            - y: Training target variable (log_bike_count, pd.Series)
+            - data_test: Preprocessed test features (pd.DataFrame)
+    """
     data = pd.read_parquet("data/train.parquet")
     data = _merge_external_data(data)
     data = _column_rename(data)
@@ -41,8 +67,23 @@ def get_and_process_data():
     return X, y, data_test
 
 
-# First tried to build a custom pipeline by doing different column transforming according to the data type of each column
 def create_pipeline(df, model=None):
+    """
+    Create a machine learning pipeline with custom preprocessing.
+    
+    This function creates a preprocessing pipeline that:
+    - Classifies columns into categorical, numerical, and binary
+    - Applies OneHotEncoder to categorical columns
+    - Applies StandardScaler to numerical columns
+    - Passes through binary columns unchanged
+    
+    Args:
+        df (pd.DataFrame): Training data to determine column types
+        model (sklearn estimator, optional): Model to use. If None, uses XGBoost with optimized parameters
+    
+    Returns:
+        sklearn.pipeline.Pipeline: Complete preprocessing and modeling pipeline
+    """
     # Classify columns into categorical, numerical, and binary
     categorical_columns = [col for col in df.columns if df[col].dtype == "object"]
     numerical_columns = [
@@ -80,8 +121,21 @@ def create_pipeline(df, model=None):
     return pipeline
 
 
-# Then tried to use a Table Vectorizer to do the column transforming part, which ended up providing a better score in the prediction
 def create_pipeline_TV(df, model=None):
+    """
+    Create a machine learning pipeline using TableVectorizer for preprocessing.
+    
+    This function creates a more sophisticated preprocessing pipeline using
+    TableVectorizer, which automatically handles mixed data types and provides
+    better performance than manual column classification.
+    
+    Args:
+        df (pd.DataFrame): Training data
+        model (sklearn estimator, optional): Model to use. If None, uses LightGBM with optimized parameters
+    
+    Returns:
+        sklearn.pipeline.Pipeline: Complete preprocessing and modeling pipeline
+    """
     # Define TableVectorizer for preprocessing
     preprocessor = ColumnTransformer(
         transformers=[
@@ -104,9 +158,21 @@ def create_pipeline_TV(df, model=None):
     return pipeline
 
 
-# Used a pipeline with Optuna to tune the hyperparameters of the model with our pipeline.
-# Once the tuning was done, we would copy the best parameters and store them in the best_params.py file
 def objective(trial, X, y):
+    """
+    Optuna objective function for hyperparameter optimization.
+    
+    This function defines the search space for LightGBM hyperparameters
+    and evaluates model performance using cross-validation.
+    
+    Args:
+        trial (optuna.trial.Trial): Optuna trial object for hyperparameter suggestions
+        X (pd.DataFrame): Training features
+        y (pd.Series): Training target variable
+    
+    Returns:
+        float: Negative mean squared error (to minimize)
+    """
     params = {
         "n_estimators": trial.suggest_int("n_estimators", 50, 500),
         "learning_rate": trial.suggest_loguniform("learning_rate", 1e-4, 0.1),
@@ -139,6 +205,20 @@ def objective(trial, X, y):
     return -scores.mean()
 
 def create_pipeline_TV_with_optuna(X, y, n_trials=50):
+    """
+    Create an optimized pipeline using Optuna for hyperparameter tuning.
+    
+    This function combines TableVectorizer preprocessing with Optuna optimization
+    to find the best LightGBM hyperparameters for the given dataset.
+    
+    Args:
+        X (pd.DataFrame): Training features
+        y (pd.Series): Training target variable
+        n_trials (int): Number of optimization trials to run
+    
+    Returns:
+        sklearn.pipeline.Pipeline: Optimized preprocessing and modeling pipeline
+    """
     # Initialize Optuna study
     study = optuna.create_study(direction="minimize")
     study.optimize(lambda trial: objective(trial, X, y), n_trials=n_trials)
@@ -163,8 +243,20 @@ def create_pipeline_TV_with_optuna(X, y, n_trials=50):
     return pipeline
 
 
-# Function used to predict and store the prediction in a csv file in the right format
 def test_fit_and_submission(X_test, pipeline):
+    """
+    Generate predictions and create submission file.
+    
+    This function fits the pipeline to test data, makes predictions,
+    and saves the results in the required submission format.
+    
+    Args:
+        X_test (pd.DataFrame): Test features
+        pipeline (sklearn.pipeline.Pipeline): Trained pipeline
+    
+    Returns:
+        pd.DataFrame: Predictions in submission format with columns ['log_bike_count']
+    """
     y_pred = pipeline.predict(X_test)
     df_submission = pd.DataFrame(y_pred, columns=["log_bike_count"])
     df_submission.index = X_test.index
@@ -174,6 +266,18 @@ def test_fit_and_submission(X_test, pipeline):
 
 
 def _column_rename(X):
+    """
+    Rename weather data columns to more descriptive names.
+    
+    This function maps abbreviated weather column names to more descriptive,
+    human-readable names including units where appropriate.
+    
+    Args:
+        X (pd.DataFrame): DataFrame with weather data columns
+    
+    Returns:
+        pd.DataFrame: DataFrame with renamed columns
+    """
     column_name_mapping = {
         "numer_sta": "Station_Number",
         "pmer": "Sea_Level_Pressure_(hPa)",
@@ -238,7 +342,10 @@ def _column_rename(X):
     return external_conditions
 
 
-# Tried different set of features using personal comprehension of the context and the Boruta algorithm from sklearn
+# Column sets for feature selection experimentation
+# These lists define different feature selection strategies tested during model development
+
+# Columns dropped based on domain knowledge and initial testing
 columns_to_drop_test = [
     "Station_Number",
     "Measurement_Period_Duration",
@@ -249,6 +356,7 @@ columns_to_drop_test = [
     "counter_name",
 ]
 
+# Columns dropped based on personal understanding of the problem domain
 columns_to_drop_personal = [
     "date",
     "counter_installation_date",
@@ -290,6 +398,7 @@ columns_to_drop_personal = [
     "Sea_Level_Pressure_(hPa)",
 ]
 
+# Columns dropped based on correlation analysis
 columns_to_drop_correlation = [
     "site_name",
     "date",
@@ -330,6 +439,7 @@ columns_to_drop_correlation = [
     "is_school_holiday",
 ]
 
+# Columns dropped based on random forest feature importance
 columns_to_drop_random = [
     "site_id",
     "site_name",
@@ -377,6 +487,7 @@ columns_to_drop_random = [
     "is_public_holiday",
 ]
 
+# Columns dropped based on Boruta feature selection algorithm
 columns_to_drop_boruta1 = [
     "counter_installation_date",
     "Station_Number",
@@ -424,8 +535,19 @@ columns_to_drop_boruta1 = [
 ]
 
 
-# Fonction qui fait ce qu'on voulait faire avec ffill et bfill mais a la place prends la valeur la plus proche
 def fill_closest_value_all_columns(df):
+    """
+    Fill NaN values with the closest non-NaN value for all numeric columns.
+    
+    This function replaces NaN values in numeric columns by finding the closest
+    non-NaN value in the same column based on absolute difference.
+    
+    Args:
+        df (pd.DataFrame): DataFrame with potential NaN values
+    
+    Returns:
+        pd.DataFrame: DataFrame with NaN values filled
+    """
     """Fill NaN values with the closest value for all numeric columns in the DataFrame."""
     filled_df = df.copy()
 
@@ -447,6 +569,18 @@ def fill_closest_value_all_columns(df):
 
 
 def _merge_external_data(X):
+    """
+    Merge bike count data with external weather data.
+    
+    This function loads weather data, cleans it by removing columns with >40% NaN values,
+    fills missing values, and merges it with the bike count data on date.
+    
+    Args:
+        X (pd.DataFrame): Bike count data with 'date' column
+    
+    Returns:
+        pd.DataFrame: Merged dataset with weather information
+    """
     external_conditions = pd.read_csv("data/external_data.csv")
     external_conditions["date"] = pd.to_datetime(external_conditions["date"])
 
@@ -479,6 +613,18 @@ def _merge_external_data(X):
 
 
 def _process_datetime_features(X):
+    """
+    Extract datetime features and add holiday indicators.
+    
+    This function processes the 'date' column to extract temporal features
+    and adds indicators for school holidays and public holidays in France.
+    
+    Args:
+        X (pd.DataFrame): DataFrame with 'date' column
+    
+    Returns:
+        pd.DataFrame: DataFrame with additional temporal and holiday features
+    """
     
     X["date"] = pd.to_datetime(X["date"], errors="coerce")
 
@@ -521,6 +667,19 @@ def _process_datetime_features(X):
 
 
 def _add_construction_work(df, df_test):
+    """
+    Add construction work indicators for specific locations and time periods.
+    
+    This function adds binary indicators for known construction work periods
+    that affected bike counts at specific counter locations in 2021.
+    
+    Args:
+        df (pd.DataFrame): Training data
+        df_test (pd.DataFrame): Test data
+    
+    Returns:
+        tuple: (df, df_test) with construction work indicators added
+    """
     start_date_Monpar = "2021-01-25"
     end_date_Monpar = "2021-02-23"
     start_date_Clichy_NO_SE = "2021-04-09"
@@ -630,6 +789,19 @@ def _add_construction_work(df, df_test):
 
 
 def _confinement_and_couvre_feu(X, X_test):
+    """
+    Add COVID-19 lockdown and curfew indicators.
+    
+    This function adds binary indicators for COVID-19 lockdowns (confinement)
+    and curfews that affected mobility patterns in France during 2020-2021.
+    
+    Args:
+        X (pd.DataFrame): Training data
+        X_test (pd.DataFrame): Test data
+    
+    Returns:
+        tuple: (X, X_test) with lockdown and curfew indicators added
+    """
     confinements = [
         ("2020-10-30", "2020-12-14", "confinement"),
         ("2021-04-03", "2021-05-19", "confinement"),

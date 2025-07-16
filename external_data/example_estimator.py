@@ -1,3 +1,10 @@
+"""
+Example estimator for bike count prediction using external weather data.
+
+This module provides a simple example of how to create a machine learning pipeline
+that incorporates external weather data for bike count prediction.
+"""
+
 from pathlib import Path
 
 import numpy as np
@@ -11,8 +18,17 @@ from sklearn.linear_model import Ridge
 
 
 def _encode_dates(X):
+    """
+    Extract datetime features from the date column.
+    
+    Args:
+        X (pd.DataFrame): DataFrame with 'date' column
+        
+    Returns:
+        pd.DataFrame: DataFrame with date features and 'date' column removed
+    """
     X = X.copy()  # modify a copy of X
-    # Encode the date information from the DateOfDeparture columns
+    # Encode the date information from the date column
     X.loc[:, "year"] = X["date"].dt.year
     X.loc[:, "month"] = X["date"].dt.month
     X.loc[:, "day"] = X["date"].dt.day
@@ -24,6 +40,18 @@ def _encode_dates(X):
 
 
 def _merge_external_data(X):
+    """
+    Merge bike count data with external weather data.
+    
+    This function performs an as-of merge to align weather data with bike count data
+    based on timestamps.
+    
+    Args:
+        X (pd.DataFrame): Bike count data with 'date' column
+        
+    Returns:
+        pd.DataFrame: Merged dataset with weather information
+    """
     file_path = Path(__file__).parent / "external_data.csv"
     df_ext = pd.read_csv(file_path, parse_dates=["date"])
 
@@ -40,6 +68,18 @@ def _merge_external_data(X):
 
 
 def get_estimator():
+    """
+    Create a simple Ridge regression pipeline with external weather data.
+    
+    This function creates a basic machine learning pipeline that:
+    1. Merges external weather data
+    2. Encodes datetime features
+    3. Preprocesses categorical and date columns
+    4. Fits a Ridge regression model
+    
+    Returns:
+        sklearn.pipeline.Pipeline: Complete preprocessing and modeling pipeline
+    """
     date_encoder = FunctionTransformer(_encode_dates)
     date_cols = ["year", "month", "day", "weekday", "hour"]
 
