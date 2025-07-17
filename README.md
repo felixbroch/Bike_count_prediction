@@ -130,7 +130,6 @@ predictions = pipeline.predict(X_test)
 The `best_params.py` file contains hyperparameters optimized through Optuna for different models:
 - `parameters_LGBM` - LightGBM parameters
 - `parameters_RandomForest` - Random Forest parameters
-- Additional optimized parameters for other models
 
 ## Key Features and Methods
 
@@ -179,7 +178,6 @@ The `best_params.py` file contains hyperparameters optimized through Optuna for 
 ## Future Improvements
 
 - **Additional Features**: Integration of more external data sources (events, traffic, etc.)
-- **Time Series Methods**: ARIMA, LSTM, or Prophet for temporal modeling
 - **Location-Specific Models**: Separate models for different counter locations
 - **Real-time Predictions**: Streaming prediction system with live weather data
 - **Seasonal Adjustments**: Better handling of seasonal patterns and trends
