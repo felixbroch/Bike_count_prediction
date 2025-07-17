@@ -1,11 +1,12 @@
 # Bike Count Prediction in Paris
 
-**Felix Brochier and Gregoire Bidault: École Polytechnique - Machine Learning 1 Course Project**  
-*Academic Year 2023-2024*
+**Felix Brochier and Gregoire Bidault - École Polytechnique Machine Learning Course Project**
 
 ## Project Description
 
-This project aims to predict the number of cyclists at various counting stations throughout Paris using historical bike count data and external factors such as weather conditions, holidays, and COVID-19 restrictions. The project was developed as part of the Machine Learning 1 course at École Polytechnique.
+This repository contains a comprehensive machine learning solution for predicting hourly bike counts at various counting stations throughout Paris. The project leverages historical bike count data combined with external factors such as weather conditions, French holidays, and COVID-19 restrictions to build accurate predictive models.
+
+The solution includes multiple modeling approaches from naive baselines to advanced ensemble methods, with extensive feature engineering and hyperparameter optimization.
 
 ### Problem Statement
 - **Objective**: Predict hourly bike counts at different counter locations in Paris
@@ -19,6 +20,29 @@ The project explores multiple machine learning approaches:
 2. **Advanced Models**: LightGBM, XGBoost, Random Forest with sophisticated feature engineering
 3. **Ensemble Methods**: Stacking multiple models for improved performance
 4. **Hyperparameter Optimization**: Using Optuna for systematic parameter tuning
+
+## Quick Start
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/felixbroch/Bike_count_prediction.git
+   cd Bike_count_prediction
+   ```
+
+2. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Run the baseline model**
+   ```bash
+   jupyter lab Notebooks/Naive_Baseline.ipynb
+   ```
+
+4. **Explore advanced models**
+   ```bash
+   jupyter lab Notebooks/stacking.ipynb
+   ```
 
 ## Installation and Setup
 
@@ -37,32 +61,36 @@ pip install -r requirements.txt
 ```
 
 ### Data Setup
-1. Download the data from [Kaggle competition](https://www.kaggle.com/competitions/mdsb-2023/overview)
-2. Place the following files in the `data/` folder:
-   - `train.parquet` - Training data with bike counts
-   - `final_test.parquet` - Test data for predictions
-   - `sample_submission.csv` - Submission format example
+The repository includes some data files in the `data/` folder:
+- `train.parquet` - Training data with bike counts
+- `final_test.parquet` - Test data for predictions
+- `sample_submission.csv` - Submission format example
+- `external_data.csv` - Weather and external data
+
+Additional data sources are also available in the `external_data/` folder.
 
 ## Project Structure
 
 ```
-├── data/                           # Data files (not included in repo)
+├── data/                           # Data files
 │   ├── train.parquet              # Training dataset
 │   ├── final_test.parquet         # Test dataset
-│   └── external_data.csv          # Weather and external data
+│   ├── external_data.csv          # Weather and external data
+│   └── sample_submission.csv      # Submission format example
 ├── external_data/                 # External data processing
 │   ├── external_data.csv          # Weather data
 │   └── example_estimator.py       # Example model implementation
-├── notebooks/                     # Jupyter notebooks
+├── Notebooks/                     # Jupyter notebooks
 │   ├── bike_counters_starting_kit.ipynb    # Initial exploration
 │   ├── Naive_Baseline.ipynb                # Baseline model (Score: 0.674)
 │   ├── data_visualisation_time_series.ipynb # Data visualization
 │   ├── pipeline_test.ipynb                 # Pipeline testing
 │   ├── stacking.ipynb                      # Ensemble methods
 │   └── without_pipeline_test.ipynb         # Model comparison
-├── utils.py                       # Core utility functions
+├── utils.py                       # Core utility functions and pipelines
 ├── best_params.py                 # Optimized hyperparameters
 ├── requirements.txt               # Python dependencies
+├── LICENSE                        # License file
 └── README.md                      # This file
 ```
 
@@ -70,33 +98,40 @@ pip install -r requirements.txt
 
 ### Running the Baseline Model
 ```bash
-jupyter lab Naive_Baseline.ipynb
+jupyter lab Notebooks/Naive_Baseline.ipynb
 ```
 This notebook demonstrates the naive baseline approach achieving a score of 0.674.
 
 ### Training Advanced Models
 ```bash
 # For pipeline-based models
-jupyter lab pipeline_test.ipynb
+jupyter lab Notebooks/pipeline_test.ipynb
 
 # For ensemble methods
-jupyter lab stacking.ipynb
+jupyter lab Notebooks/stacking.ipynb
 ```
 
 ### Using Utility Functions
 ```python
 from utils import get_and_process_data, create_pipeline_TV
+from best_params import parameters_LGBM, parameters_RandomForest
 
 # Load and preprocess data
 X, y, X_test = get_and_process_data()
 
-# Create optimized pipeline
+# Create optimized pipeline using best parameters
 pipeline = create_pipeline_TV(X)
 
 # Fit and predict
 pipeline.fit(X, y)
 predictions = pipeline.predict(X_test)
 ```
+
+### Using Pre-optimized Parameters
+The `best_params.py` file contains hyperparameters optimized through Optuna for different models:
+- `parameters_LGBM` - LightGBM parameters
+- `parameters_RandomForest` - Random Forest parameters
+- Additional optimized parameters for other models
 
 ## Key Features and Methods
 
@@ -153,13 +188,24 @@ predictions = pipeline.predict(X_test)
 ## Dependencies
 
 Key libraries used in this project:
-- **Data Processing**: pandas, numpy, scikit-learn
-- **Machine Learning**: lightgbm, xgboost, sklearn
-- **Optimization**: optuna for hyperparameter tuning
+- **Data Processing**: pandas, numpy, scikit-learn, pyarrow
+- **Machine Learning**: lightgbm, xgboost, sklearn, h2o
+- **Optimization**: optuna, flaml for hyperparameter tuning
 - **Feature Engineering**: skrub TableVectorizer
-- **Visualization**: matplotlib, seaborn
-- **Environment**: jupyter, ipython
+- **Visualization**: matplotlib, seaborn, folium
+- **French Data**: jours_feries_france, vacances_scolaires_france
+- **Environment**: jupyter, jupyterlab, ipython
+- **Utilities**: joblib for model persistence
+
+All dependencies are listed in `requirements.txt` and can be installed with:
+```bash
+pip install -r requirements.txt
+```
 
 ## Authors
 
-This project was developed by Felix and Gregoire at École Polytechnique as part of the Machine Learning 1 course curriculum.
+This project was developed by Felix Brochier and Gregoire Bidault at École Polytechnique as part of the Machine Learning 1 course curriculum.
+
+## License
+
+This project is licensed under the terms specified in the LICENSE file.
