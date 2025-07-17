@@ -26,7 +26,6 @@ The project explores multiple machine learning approaches:
 1. **Clone the repository**
    ```bash
    git clone https://github.com/felixbroch/Bike_count_prediction.git
-   cd Bike_count_prediction
    ```
 
 2. **Install dependencies**
